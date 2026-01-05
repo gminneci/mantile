@@ -55,13 +55,14 @@ This counts `h` twice (up_output + down_input), accounting for peak memory with 
 
 **Communication:**
 - **Tensor Parallel (TP)**: All-reduce on output `y` of shape `(M × d)` or `(M_local × d)` if SP enabled
-- **Sequence Parallel (SP)**: All-gather on input + Reduce-scatter on output, both of size `(M × d)` elements
+- **Sequence Parallel (token-parallel, inference)**: Tokens are partitioned across chips. Each chip independently executes FFN on its local tokens. **No communication is required for FFN layers.**
 - `communication_bytes`: Payload bytes (logical tensor size) transferred per chip
   
 **Current Implementation Notes:**
 1. **Weight sharding**: Weights are NOT currently sharded by TP (full weights on each chip)
-2. **Communication**: TP and SP communication bytes calculated but overlap/timing not fully modeled
-3. These tests document current implementation behavior
+2. **Communication**: Communication bytes shown reflect ground-truth payload for TP all-reduce; overlap/timing modeling is future work
+3. **Token-parallel SP**: No communication needed for FFN layers (tokens processed independently)
+4. These tests document expected behavior and current implementation state
 
 
 # Test 0 — Vanilla FFN, single chip (inference)
@@ -204,14 +205,14 @@ So:
 
 #### 4) Communication
 
-**Expected (when fully implemented):** All-reduce on `y` across TP group:
+All-reduce on `y` across TP group:
 
 * payload elems = `M × d = 256 × 1024 = 262,144`
 * payload bytes = `262,144 × 2 = 524,288`
 
-**Current implementation:** Communication bytes calculated by `_compute_communication_bytes()` but returns `None` currently.
+So:
 
-* **communication_bytes = None** (not yet implemented)
+* **communication_bytes = 524,288**
 
 ### Expected Results (Current Implementation)
 
@@ -231,12 +232,11 @@ So:
 
 **Hardware-dependent**
 
-* communication_bytes: **None** (not yet implemented)
+* communication_bytes: **524,288** (TP all-reduce)
 
 **Note:** Future implementation should have:
 - `weight_memory_per_chip = 4,194,304` (sharded)
 - `weight_memory_total = 16,777,216` (total unique weights)
-- `communication_bytes = 524,288` (TP all-reduce)
 
 ---
 
@@ -296,9 +296,9 @@ So:
 
 #### 4) Communication
 
-For FFN-only:
+Token-parallel SP: Each chip processes its local tokens independently.
 
-* **communication_bytes = 0**
+* **communication_bytes = 0** (no communication needed for FFN)
 
 ### Expected Results (Current Implementation)
 
@@ -318,9 +318,7 @@ For FFN-only:
 
 **Hardware-dependent**
 
-* communication_bytes: **None** (not yet implemented)
-
-**Note:** SP should have all-gather + reduce-scatter communication
+* communication_bytes: **0** (no communication for token-parallel SP)
 
 ---
 
@@ -386,14 +384,14 @@ So:
 
 #### 4) Communication
 
-TP all-reduce on local (y_{local}[M_local, d]) within each SP group:
+TP all-reduce on local output `y_local` (shape `M_local × d`) within each SP group:
 
 * payload elems = `M_local × d = 128 × 1024 = 131,072`
-* payload bytes = (131,072 × 2 = 262,144)
+* payload bytes = `131,072 × 2 = 262,144`
 
 So:
 
-* **communication_bytes = 262,144** (per chip per FFN)
+* **communication_bytes = 262,144**
 
 ### Expected Results (Current Implementation)
 
@@ -413,12 +411,11 @@ So:
 
 **Hardware-dependent**
 
-* communication_bytes: **None** (not yet implemented)
+* communication_bytes: **262,144** (TP all-reduce on local tokens)
 
 **Note:** Future implementation should have:
 - `weight_memory_per_chip = 4,194,304` (sharded by TP)
 - `weight_memory_total = 33,554,432` (replicated across SP)
-- `communication_bytes = 262,144` (TP all-reduce on local tokens)
 
 ---
 

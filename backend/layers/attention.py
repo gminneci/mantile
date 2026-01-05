@@ -76,61 +76,101 @@ class AttentionLayer(Layer):
         FLOPs per chip for MHA:
         - Projections: Q,K,V,O with per-chip output/input sized by 1/tp
         - Attention compute: uses num_heads_per_chip
-        Prefill: S×S attention; Decode: 1×S
+        Phase:
+            Prefill: S×S attention on full sequence
+            Decode: 1×S_past attention (1 new token attends to S_past cached tokens)
+                    seq_len parameter represents S_past (cached context)
         """
         tp = self.parallelism.get("tensor_parallel", 1)
-        B, S = batch_size, seq_len
+        B = batch_size
         H = self.hidden_size
         d = self.head_dim
         h_per = self.num_heads // tp
 
         # Projections per chip
         flops = 0
-        flops += 2 * B * S * H * (H // tp)  # Q
-        flops += 2 * B * S * H * (H // tp)  # K
-        flops += 2 * B * S * H * (H // tp)  # V
-        flops += 2 * B * S * (H // tp) * H  # O
-
-        # Attention math
-        if phase == Phase.PREFILL:
+        if phase == Phase.DECODE:
+            # During decode: process 1 new token, attend to seq_len cached tokens
+            S_new = 1
+            S_past = seq_len
+            flops += 2 * B * S_new * H * (H // tp)  # Q (for new token)
+            flops += 2 * B * S_new * H * (H // tp)  # K (for new token)
+            flops += 2 * B * S_new * H * (H // tp)  # V (for new token)
+            flops += 2 * B * S_new * (H // tp) * H  # O (for new token)
+            # Attention: 1×S_past (new token attends to past+current = S_past+1)
+            flops += 2 * B * h_per * (S_past + 1) * d      # QK^T (1 × (S_past+1))
+            flops += 2 * B * h_per * (S_past + 1) * d      # Attn * V
+        else:  # PREFILL
+            S = seq_len
+            flops += 2 * B * S * H * (H // tp)  # Q
+            flops += 2 * B * S * H * (H // tp)  # K
+            flops += 2 * B * S * H * (H // tp)  # V
+            flops += 2 * B * S * (H // tp) * H  # O
+            # Attention: S×S (full sequence)
             flops += 2 * B * h_per * S * S * d  # QK^T
             flops += 2 * B * h_per * S * S * d  # Attn * V
-        else:  # DECODE (1 x S)
-            flops += 2 * B * h_per * S * d      # QK^T
-            flops += 2 * B * h_per * S * d      # Attn * V
         return int(flops)
     
     def compute_weight_memory(self, dtype: DataType) -> int:
-        return int(self.param_count * dtype.bytes_per_element)
+        # Weight memory per chip: head-parallel shards Q,K,V,O projections
+        tp = self.parallelism.get("tensor_parallel", 1)
+        params_per_chip = self.param_count // tp
+        return int(params_per_chip * dtype.bytes_per_element)
 
     def compute_activation_memory(self, batch_size: int, seq_len: int, phase: Phase, dtype: DataType) -> int:
         """
-        Approximate peak activations per chip: Q, K, V, scores, and output shard.
+        Approximate peak activations per chip (not counting attention score matrix).
+        Most implementations tile/stream the attention scores, so we only count:
+        - Input X, Q, K, V, and output Y
+        
+        Phase:
+            Prefill: X, Q, K, V, Y are all full size M×d
+            Decode: X_new (input), QKV local shards, Y_new (output) for 1 new token
         """
         tp = self.parallelism.get("tensor_parallel", 1)
-        B, S = batch_size, seq_len
+        B = batch_size
         H = self.hidden_size
-        d = self.head_dim
-        h_per = self.num_heads // tp
 
         elems = 0
-        # Q, K, V shards
-        elems += B * S * (H // tp)  # Q
-        elems += B * S * (H // tp)  # K
-        elems += B * S * (H // tp)  # V
-        # Attention scores
-        if phase == Phase.PREFILL:
-            elems += B * h_per * S * S
-        else:
-            elems += B * h_per * S  # 1 x S per head
-        # Output partial before all-reduce
-        elems += B * S * (H // tp)
+        if phase == Phase.DECODE:
+            # Process 1 new token
+            S_new = 1
+            M_q = B * S_new
+            # Input X_new: M_q × d
+            elems += M_q * H
+            # QKV local slices: 3 × M_q × (d/tp)
+            elems += 3 * M_q * (H // tp)
+            # Output Y_new: M_q × d
+            elems += M_q * H
+        else:  # PREFILL
+            S = seq_len
+            M = B * S
+            # Input X: M × d
+            elems += M * H
+            # Q, K, V: each M × d
+            elems += 3 * M * H
+            # Output Y: M × d
+            elems += M * H
         return int(elems * dtype.bytes_per_element)
 
     def compute_kv_cache(self, batch_size: int, seq_len: int, dtype: DataType) -> int:
         # KV cache per chip with head-parallel sharding
+        # Note: This is called by base class without phase info.
+        # For decode with phase info, use _compute_kv_cache_with_phase()
         h_per = self.num_heads // self.parallelism.get("tensor_parallel", 1)
         elements = 2 * batch_size * h_per * seq_len * self.head_dim
+        return int(elements * dtype.bytes_per_element)
+    
+    def _compute_kv_cache_with_phase(self, batch_size: int, seq_len: int, phase: Phase, dtype: DataType) -> int:
+        """
+        Compute KV cache with phase awareness.
+        - Prefill: cache size = seq_len (all tokens in prompt)
+        - Decode: cache size = seq_len + 1 (past tokens + new token)
+                  seq_len parameter represents past context
+        """
+        h_per = self.num_heads // self.parallelism.get("tensor_parallel", 1)
+        cache_len = seq_len if phase == Phase.PREFILL else seq_len + 1
+        elements = 2 * batch_size * h_per * cache_len * self.head_dim
         return int(elements * dtype.bytes_per_element)
 
     def _compute_communication_bytes(
@@ -141,11 +181,44 @@ class AttentionLayer(Layer):
         dtype: DataType,
         hardware: dict
     ) -> Optional[int]:
-        # All-reduce on attention output of size B*S*H
+        # All-reduce on attention output: B * tokens_this_step * H
+        # Prefill: tokens_this_step = seq_len (full sequence)
+        # Decode: tokens_this_step = 1 (new token only)
         tp = self.parallelism.get("tensor_parallel", 1)
         if tp > 1:
-            return int(batch_size * seq_len * self.hidden_size * dtype.bytes_per_element)
+            tokens_this_step = 1 if phase == Phase.DECODE else seq_len
+            return int(batch_size * tokens_this_step * self.hidden_size * dtype.bytes_per_element)
         return None
+    
+    def compute_metrics(
+        self,
+        batch_size: int,
+        seq_len: int,
+        phase: Phase | str,
+        dtype: DataType | str,
+        hardware: Optional[dict] = None
+    ):
+        """Override to use phase-aware KV cache calculation"""
+        # Convert string inputs to enums
+        if isinstance(phase, str):
+            phase = Phase(phase)
+        if isinstance(dtype, str):
+            dtype = DataType(dtype)
+        
+        # Call parent's compute_metrics
+        metrics = super().compute_metrics(batch_size, seq_len, phase, dtype, hardware)
+        
+        # Replace KV cache with phase-aware version
+        kv_cache_per_chip = self._compute_kv_cache_with_phase(batch_size, seq_len, phase, dtype)
+        num_chips = self._get_num_chips()
+        
+        # Create new metrics with updated KV cache
+        from dataclasses import replace
+        return replace(
+            metrics,
+            kv_cache_per_chip=kv_cache_per_chip,
+            kv_cache_total=kv_cache_per_chip * num_chips
+        )
 
 
 class GroupedQueryAttentionLayer(Layer):

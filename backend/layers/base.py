@@ -285,6 +285,10 @@ class Layer(ABC):
         activation_mem_per_chip = self.compute_activation_memory(batch_size, seq_len, phase, dtype)
         kv_cache_per_chip = self.compute_kv_cache(batch_size, seq_len, dtype)
         
+        # Communication bytes (if applicable based on parallelism strategy)
+        # This is computed regardless of hardware config, as it's a property of the layer
+        comm_bytes = self._compute_communication_bytes(batch_size, seq_len, phase, dtype, hardware or {})
+        
         # Compute aggregate metrics (total across all chips)
         # Note: FLOPs might not scale linearly with num_chips (e.g., PP doesn't replicate work)
         flops_total = flops_per_chip * num_chips  # Override in subclasses if needed
@@ -295,7 +299,6 @@ class Layer(ABC):
         # Compute hardware-dependent metrics if config provided
         compute_time = None
         weight_load_time = None
-        comm_bytes = None
         comm_time = None
         
         # Derived metrics (initialized as None)
@@ -317,8 +320,7 @@ class Layer(ABC):
             if mem_bw > 0:
                 weight_load_time = (weight_mem_per_chip / mem_bw) * 1000  # Convert to ms
             
-            # Communication (for tensor parallelism, pipeline parallelism, etc.)
-            comm_bytes = self._compute_communication_bytes(batch_size, seq_len, phase, dtype, hardware)
+            # Communication time (if communication bytes were computed)
             if comm_bytes is not None:
                 interconnect_bw = hardware.get("interconnect_bandwidth_gb_s", 0) * 1e9
                 interconnect_latency_us = hardware.get("interconnect_latency_us", 0)
