@@ -1,0 +1,14 @@
+{
+  "name": "NVIDIA H100 SXM5 (80GB)",
+  "description": "Single H100 SXM5 GPU with 80GB HBM3. Standard datacenter configuration.",
+  "fp16_tflops": 989.0,
+  "bf16_tflops": 989.0,
+  "fp8_tflops": 1979.0,
+  "int8_tops": 1979.0,
+  "hbm_capacity_gb": 80.0,
+  "hbm_bandwidth_gbps": 3350.0,
+  "interconnect_bandwidth_gbps": 900.0,
+  "interconnect_latency_us": 0.30,
+  "chips_per_node": 1,
+  "nodes_per_cluster": 1
+}

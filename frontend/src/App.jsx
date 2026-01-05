@@ -51,7 +51,7 @@ export default function App() {
 
   // Config State
   const [hwPreset, setHwPreset] = useState('nvl72_single'); // Default to single for easier reasoning, or rack? User wanted NVL-72
-  const [modelId, setModelId] = useState('TinyLlama/TinyLlama-1.1B-Chat-v1.0');
+  const [modelId, setModelId] = useState('meta-llama/Llama-3.3-70B-Instruct');
   const [tpSize, setTpSize] = useState(1);
   const [batchSize, setBatchSize] = useState(1);
   const [inputSeq, setInputSeq] = useState(128);
@@ -216,18 +216,18 @@ export default function App() {
             </div>
 
             {/* Charts Row */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[400px]">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
               {/* Memory Config */}
               <motion.div
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: 0.5 }}
-                className="card flex flex-col"
+                className="card"
               >
                 <h3 className="text-lg font-semibold mb-4 text-dim">Memory Breakdown (GB)</h3>
-                <div className="flex-1 w-full min-h-0">
-                  <ResponsiveContainer width="100%" height="100%">
+                <div style={{ width: '100%', height: '300px' }}>
+                  <ResponsiveContainer>
                     <BarChart data={memoryData} layout="vertical" margin={{ left: 20 }}>
                       <XAxis type="number" stroke="#8892b0" fontSize={12} />
                       <YAxis dataKey="name" type="category" stroke="#8892b0" fontSize={12} width={80} />
@@ -250,11 +250,11 @@ export default function App() {
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: 0.6 }}
-                className="card flex flex-col"
+                className="card"
               >
                 <h3 className="text-lg font-semibold mb-4 text-dim">Bottleneck Analysis (%)</h3>
-                <div className="flex-1 w-full min-h-0">
-                  <ResponsiveContainer width="100%" height="100%">
+                <div style={{ width: '100%', height: '300px' }}>
+                  <ResponsiveContainer>
                     <BarChart data={bottleneckData} barCategoryGap="20%">
                       <XAxis dataKey="name" stroke="#8892b0" fontSize={12} />
                       <YAxis stroke="#8892b0" fontSize={12} domain={[0, 100]} />

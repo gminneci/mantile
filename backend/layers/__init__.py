@@ -90,6 +90,9 @@ from .attention import AttentionLayer, GroupedQueryAttentionLayer
 # Normalization layers
 from .norm import NormLayer
 
+# Embedding layers
+from .embedding import EmbeddingLayer
+
 __all__ = [
     # Base classes
     "Layer",
@@ -104,4 +107,6 @@ __all__ = [
     "GroupedQueryAttentionLayer",
     # Normalization layers
     "NormLayer",
+    # Embedding layers
+    "EmbeddingLayer",
 ]

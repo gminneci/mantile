@@ -3,6 +3,7 @@ from typing import List, Optional, Dict
 
 class HardwareSpecs(BaseModel):
     name: str
+    description: Optional[str] = None
     
     # Compute (TFLOPS per chip/package) - Scaled to user selection (e.g. 1 chip or full rack)
     fp16_tflops: float

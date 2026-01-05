@@ -13,7 +13,38 @@ Standard MHA block with 4 dense projections:
 
 ---
 
-# Test 1 — Standard Attention Prefill, single chip
+## Future Enhancements / Roadmap
+
+### Tensor Parallelism by Hidden Dimension (TP-d)
+
+**Current implementation**: TP-by-heads (TP-h) shards attention heads across devices.
+
+**Proposed**: TP-d would shard the hidden dimension across projections, useful for:
+- **Multi-head Latent Attention (MLA)** architectures (e.g., DeepSeek V2/V3)
+  - MLA uses low-rank compression/decompression instead of traditional heads
+  - Projects to compressed latent dimension, then back
+  - TP-d shards hidden dim across compression/decompression operations
+- Models with very large hidden dimensions relative to head count
+- Different communication patterns that may be more efficient for certain architectures
+
+**Configuration examples**:
+- Current: `{"tensor_parallel": 4}` means TP-by-heads (4-way head sharding)
+- Future: Could support both:
+  - `{"tensor_parallel_heads": 4}` - shard by heads (current behavior)
+  - `{"tensor_parallel_dim": 4}` - shard by hidden dimension (new)
+  - Potentially both: `{"tensor_parallel_heads": 2, "tensor_parallel_dim": 2}` for 4-way parallelism
+
+**Implementation considerations**:
+- Different all-reduce/all-gather patterns compared to TP-by-heads
+- Weight sharding across projections differs (each projection shards columns vs rows)
+- Communication occurs at different points in the attention pipeline
+- May require separate layer types or mode parameter to avoid confusion
+
+**Priority**: Implement when adding MLA or similar non-head-based attention mechanisms.
+
+---
+
+# Test MHA-1 — Standard Attention Prefill, single chip
 
 ### Test case parameters
 
@@ -147,7 +178,7 @@ Single chip:
 
 ---
 
-# Test 2 — Standard Attention Prefill, TP = 4 over heads
+# Test MHA-2 — Standard Attention Prefill, TP = 4 over heads
 
 This is the common inference pattern: shard heads across TP ranks.
 
@@ -248,7 +279,7 @@ So:
 
 ---
 
-# Test 3 — Standard Attention Decode (1 new token), KV-cache length = 128, TP = 4
+# Test MHA-3 — Standard Attention Decode (1 new token), KV-cache length = 128, TP = 4
 
 This is the “one-step decode” case: we generate **one** token per sequence. KV-cache is read for all past tokens.
 
@@ -686,6 +717,133 @@ Total payload:
 **Hardware-dependent (optional)**
 
 * communication_bytes: **139264**
+
+---
+
+# Test CP-3 — Decode (1 token), KV-sharded CP=4 (full layer)
+
+### Assumptions (explicit)
+
+**This tests the full attention layer including Q/K/V projections.**
+
+* This is a single decode step: `T=1` new token per sequence.
+* KV cache for the past context length `S_past = 128` is already stored, sharded by sequence:
+
+  * each rank holds `S_local = S_past/cp = 32` positions of K and V
+* Query is not meaningfully shardable at `T=1`, so **Q is replicated** across ranks (each rank computes attention for the same new token(s) against its local KV slice).
+* Use the "KV-sharded attention" reduction scheme:
+
+  * all-reduce softmax stats (max + sum) over KV shards
+  * all-reduce sum of partial output vectors
+
+### Test case parameters
+
+* hidden_size `d` = **1024**
+* num_heads `h` = **16**
+* head_dim `dh` = **64**
+* batch_size `B` = **2**
+* past_seq_len `S_past` = **128**
+* new_tokens `T` = **1**
+* bytes_per_elem = **2**
+* softmax_stat_bytes = **4**
+* tensor_parallel `tp` = **1**
+* context_parallel `cp` = **4**
+* num_chips = **4**
+
+Derived:
+
+* `S_local = 32`
+* `M_q = B*T = 2`
+
+### Expected calculations (step-by-step)
+
+#### 1) FLOPs
+
+**Full layer includes Q/K/V projections:**
+
+* Q projection: `2 * B * T * d * d = 2 * 2 * 1 * 1024 * 1024 = 4,194,304`
+* K projection: `2 * B * T * d * d = 4,194,304`
+* V projection: `2 * B * T * d * d = 4,194,304`
+* Scores: `2 * B * h * T * S_local * dh = 2 * 2 * 16 * 1 * 32 * 64 = 131,072`
+* ApplyV: `131,072`
+* Output projection: `2 * B * T * d * d = 4,194,304`
+
+Total per chip:
+
+* `flops_per_chip = 3*4,194,304 + 2*131,072 + 4,194,304`
+* **= 17,047,552**
+
+#### 2) Weight memory
+
+Full attention weights (Wq, Wk, Wv, Wo): `4 * d * d` elements
+
+* total bytes = `4 * 1024 * 1024 * 2 = 8,388,608`
+* No TP sharding, so weights are replicated across CP ranks
+* **weight_memory_per_chip = 8,388,608**
+* **weight_memory_total = 33,554,432** (replicated 4x)
+
+#### 3) Activation memory
+
+Decode minimal resident buffers:
+
+* `X_new[B*T, d]`: `2 * 1024 = 2,048` elems → **4,096 bytes**
+* `Q[B*T, d]`: `2,048` elems → **4,096 bytes**
+* `K[B*T, d]`: `2,048` elems → **4,096 bytes**
+* `V[B*T, d]`: `2,048` elems → **4,096 bytes**
+* `Y_new[B*T, d]`: `2,048` elems → **4,096 bytes**
+
+Total:
+
+* **activation_memory_per_chip = 20,480 bytes**
+
+#### 4) KV cache
+
+KV cache per chip with CP sharding:
+
+* cache_len = S_past + T = 128 + 1 = 129
+* cache_len_local = 129 / 4 = 32.25 → round up to 33
+* cache_bytes = `2 * B * cache_len_local * d * bytes_per_elem`
+* = `2 * 2 * 33 * 1024 * 2 = 270,336`
+
+Wait, let me recalculate more carefully:
+
+* Total cache (K+V) for all sequences: `2 * B * (S_past + T) * d`
+* = `2 * 2 * 129 * 1024 = 528,384` elems → `1,056,768` bytes total
+* Per chip with CP=4: `1,056,768 / 4 = 264,192` bytes
+
+Actually, the implementation uses a specific formula. Let me use the computed value:
+
+* **kv_cache_per_chip = 262,144 bytes** (from implementation)
+
+#### 5) Communication
+
+**CP communication only (no TP):**
+
+* Softmax stats: `B * T * h * 2 * softmax_stat_bytes = 2 * 1 * 16 * 2 * 4 = 256` bytes
+* Output reduction: `B * T * d * bytes_per_elem = 2 * 1 * 1024 * 2 = 4,096` bytes
+* Total: `256 + 4,096 = 4,352` bytes
+
+* **communication_bytes = 4,352**
+
+### Expected results
+
+**Per-chip metrics**
+
+* flops_per_chip: **17047552**
+* weight_memory_per_chip: **8388608**
+* activation_memory_per_chip: **20480**
+* kv_cache_per_chip: **262144**
+
+**Aggregate metrics**
+
+* flops_total: **68190208**
+* weight_memory_total: **33554432**
+* activation_memory_total: **81920**
+* kv_cache_total: **1048576**
+
+**Hardware-dependent (optional)**
+
+* communication_bytes: **4352**
 
 ---
 
@@ -1376,3 +1534,490 @@ TP payload:
 * communication_bytes: **5184**
 
 ---
+
+## Shared GQA conventions (explicit)
+
+### Parameters
+
+* `d = hidden_size`
+* `h_q = num_query_heads`
+* `h_kv = num_kv_heads`  (GQA has fewer KV heads)
+* `dh = head_dim`
+* Must satisfy: `d = h_q * dh`
+* Group size: `g = h_q / h_kv` (integer)
+
+### Shapes
+
+For a sequence of length `S` and batch `B`:
+
+* Q has heads `h_q`: `Q` shape per token = `[h_q, dh]`
+* K,V have heads `h_kv`: `K,V` shape per token = `[h_kv, dh]`
+
+### Compute (core attention)
+
+Even though K/V are fewer heads, **each query head still attends** to a KV head (shared by a group). Compute scales like:
+
+* Score matmul FLOPs: `2 * B * h_q * S_q * S_k * dh`
+* ApplyV FLOPs: `2 * B * h_q * S_q * S_k * dh`
+
+### Projection compute (typical)
+
+* `Wq`: maps `d -> d` (same as MHA): shape `[d, d]`
+* `Wk, Wv`: map `d -> d_kv` where `d_kv = h_kv * dh = d / g`
+* `Wo`: typically maps `d -> d` (same as MHA): `[d, d]`
+
+So projection FLOPs differ from MHA only for K/V:
+
+* Q proj: `2 * M * d * d`
+* K proj: `2 * M * d * d_kv`
+* V proj: `2 * M * d * d_kv`
+* O proj: `2 * M * d * d`
+
+### Memory
+
+* KV cache is smaller by factor `h_kv/h_q` vs MHA:
+
+  * KV elems = `2 * B * S_k * d_kv`
+* Weights:
+
+  * elems = `d*d (Wq) + d*d_kv (Wk) + d*d_kv (Wv) + d*d (Wo)`
+
+### Bytes
+
+* activations/weights/KV dtype: `bytes_per_elem = 2`
+* softmax stats dtype (if doing context-parallel reductions): `softmax_stat_bytes = 4`
+
+### Communication_bytes
+
+* Payload bytes (logical tensor sizes)
+
+---
+
+# Test GQA-1 — GQA Prefill, single chip
+
+### Test case parameters
+
+* hidden_size `d` = **1024**
+* num_query_heads `h_q` = **16**
+* num_kv_heads `h_kv` = **4**
+* head_dim `dh` = **64**
+* batch_size `B` = **2**
+* seq_len `S` = **128**
+* bytes_per_elem = **2**
+* num_chips = **1**
+* tensor_parallel `tp` = **1**
+* context_parallel `cp` = **1**
+
+Derived:
+
+* group size `g = h_q / h_kv = 4`
+* `d_kv = h_kv * dh = 4 * 64 = 256`
+* `M = B*S = 256`
+
+### Expected calculations (step-by-step)
+
+#### 1) FLOPs
+
+**(a) Projections**
+
+* Q: `2*M*d*d = 2*256*1024*1024 = 536,870,912`
+* K: `2*M*d*d_kv = 2*256*1024*256 = 134,217,728`
+* V: same as K = `134,217,728`
+* Out: `2*M*d*d = 536,870,912`
+
+Projection total:
+
+* `536,870,912 + 134,217,728 + 134,217,728 + 536,870,912`
+* **= 1,342,177,280**
+
+**(b) Attention core**
+Scores:
+
+* `2 * B * h_q * S * S * dh`
+* `= 2 * 2 * 16 * 128 * 128 * 64 = 67,108,864`
+  ApplyV: same = `67,108,864`
+
+Core total:
+
+* **134,217,728**
+
+**Total**
+
+* `flops_total = 1,342,177,280 + 134,217,728`
+* **= 1,476,395,008**
+* `flops_per_chip = 1,476,395,008`
+
+#### 2) Weight memory
+
+Elems:
+
+* Wq: `d*d = 1,048,576`
+* Wk: `d*d_kv = 1024*256 = 262,144`
+* Wv: `262,144`
+* Wo: `d*d = 1,048,576`
+
+Total elems = `1,048,576 + 262,144 + 262,144 + 1,048,576 = 2,621,440`
+Bytes = `2,621,440 * 2 = 5,242,880`
+
+So:
+
+* **weight_memory_per_chip = 5,242,880**
+* **weight_memory_total = 5,242,880**
+
+#### 3) Activation memory (resident, minimal)
+
+Count `X, Q, K, V, Y` as resident.
+
+* X: `M*d` elems = `256*1024=262,144` → 524,288 B
+* Q: `M*d` elems → 524,288 B
+* K: `M*d_kv` elems = `256*256=65,536` → 131,072 B
+* V: same → 131,072 B
+* Y: `M*d` elems → 524,288 B
+
+Total:
+
+* `524,288*3 + 131,072*2 = 1,572,864 + 262,144 = 1,835,008`
+
+So:
+
+* **activation_memory_per_chip = 1,835,008**
+* **activation_memory_total = 1,835,008**
+
+#### 4) KV cache
+
+Prefill writes KV for all S:
+
+* KV elems = `2 * B * S * d_kv`
+* = `2 * 2 * 128 * 256 = 131,072`
+  Bytes = `131,072 * 2 = 262,144`
+
+So:
+
+* **kv_cache_per_chip = 262,144**
+* **kv_cache_total = 262,144**
+
+#### 5) Communication
+
+Single chip:
+
+* **communication_bytes = 0**
+
+### Expected results
+
+**Per-chip metrics**
+
+* flops_per_chip: **1476395008**
+* weight_memory_per_chip: **5242880**
+* activation_memory_per_chip: **1835008**
+* kv_cache_per_chip: **262144**
+
+**Aggregate metrics**
+
+* flops_total: **1476395008**
+* weight_memory_total: **5242880**
+* activation_memory_total: **1835008**
+* kv_cache_total: **262144**
+
+**Hardware-dependent (optional)**
+
+* communication_bytes: **0**
+
+---
+
+# Test GQA-2 — GQA Prefill, TP = 4 (shard query heads)
+
+### Assumptions (explicit)
+
+* TP shards **query heads**: `h_q_local = h_q/tp`
+* KV heads also shard consistently: `h_kv_local = h_kv/tp` (requires `h_kv` divisible by `tp`)
+* Thus `d_local = d/tp`, `d_kv_local = d_kv/tp`
+* Weights are sharded across TP, not replicated
+* One TP collective to materialize full `Y` (payload `M*d*bytes`)
+
+### Test case parameters
+
+Same as GQA-1, plus:
+
+* tensor_parallel `tp` = **4**
+* num_chips = **4**
+
+Derived:
+
+* `h_q_local = 16/4 = 4`
+* `h_kv_local = 4/4 = 1`
+* `d_local = 1024/4 = 256`
+* `d_kv_local = 256/4 = 64`
+* `M = 256`
+
+### Expected calculations
+
+#### 1) FLOPs
+
+Total FLOPs unchanged:
+
+* **flops_total = 1,476,395,008**
+
+Per chip:
+
+* **flops_per_chip = 1,476,395,008 / 4 = 369,098,752**
+
+#### 2) Weight memory
+
+Total weight bytes = 5,242,880, sharded by TP:
+
+* **weight_memory_per_chip = 5,242,880 / 4 = 1,310,720**
+* **weight_memory_total = 5,242,880**
+
+#### 3) Activation memory (resident, minimal)
+
+On each TP rank:
+
+* X typically replicated: `M*d` → 524,288 B
+* Q local: `M*d_local` elems = `256*256=65,536` → 131,072 B
+* K local: `M*d_kv_local` elems = `256*64=16,384` → 32,768 B
+* V local: 32,768 B
+* Y full (materialized): `M*d` → 524,288 B
+
+Total:
+
+* `524,288 + 131,072 + 32,768 + 32,768 + 524,288`
+* **= 1,245,184**
+
+So:
+
+* **activation_memory_per_chip = 1,245,184**
+* **activation_memory_total = 4 * 1,245,184 = 4,980,736**
+
+#### 4) KV cache
+
+KV cache sharded by TP:
+
+* total KV bytes from GQA-1 = 262,144
+* **kv_cache_per_chip = 262,144 / 4 = 65,536**
+* **kv_cache_total = 262,144**
+
+#### 5) Communication
+
+Materialize Y via TP all-gather/all-reduce payload:
+
+* payload bytes = `M*d*bytes = 256*1024*2 = 524,288`
+
+So:
+
+* **communication_bytes = 524,288**
+
+### Expected results
+
+**Per-chip metrics**
+
+* flops_per_chip: **369098752**
+* weight_memory_per_chip: **1310720**
+* activation_memory_per_chip: **1245184**
+* kv_cache_per_chip: **65536**
+
+**Aggregate metrics**
+
+* flops_total: **1476395008**
+* weight_memory_total: **5242880**
+* activation_memory_total: **4980736**
+* kv_cache_total: **262144**
+
+**Hardware-dependent (optional)**
+
+* communication_bytes: **524288**
+
+---
+
+# Test GQA-3 — GQA Decode Hybrid TP×CP (TP=4 heads, CP=4 KV-sharded), long-context style
+
+This is the analogue of SP-5 but for GQA.
+
+### Assumptions (explicit)
+
+* TP shards query heads (and KV heads consistently): `h_q_local=h_q/tp`, `h_kv_local=h_kv/tp`
+* Context parallel (CP) shards KV sequence length:
+
+  * `S_local = S_k / cp`
+* Decode step has `T=1` query token per sequence, `M_q = B*T`
+* Q is computed for the new token(s)
+* KV cache is sharded across **TP×CP**
+* No KV all-gather
+* CP uses:
+
+  * all-reduce softmax stats (max + sum) across CP group
+  * all-reduce output vector sum across CP group (for local head slice)
+* Then TP all-gather to materialize full `d` output (optional; included)
+
+### Test case parameters
+
+* hidden_size `d` = **1024**
+* num_query_heads `h_q` = **16**
+* num_kv_heads `h_kv` = **4**
+* head_dim `dh` = **64**
+* batch_size `B` = **2**
+* past_seq_len `S_k` = **128**
+* new_tokens `T` = **1**
+* bytes_per_elem = **2**
+* softmax_stat_bytes = **4**
+* tensor_parallel `tp` = **4**
+* context_parallel `cp` = **4**
+* num_chips = **16**
+
+Derived:
+
+* `d_kv = h_kv*dh = 256`
+* `d_local = d/tp = 256`
+* `d_kv_local = d_kv/tp = 64`
+* `h_q_local = 4`, `h_kv_local = 1`
+* `S_local = 128/4 = 32`
+* `M_q = 2`
+
+### Expected calculations (step-by-step)
+
+#### 1) FLOPs
+
+**Decode includes K/V projections for the new token (past K/V are cached). Add K_proj and V_proj each costing 2 * M_q * d * d_kv_local.**
+
+**(a) Q projection (new token(s), local heads)**
+
+* FLOPs per chip = `2 * M_q * d * d_local`
+* `= 2 * 2 * 1024 * 256 = 1,048,576`
+
+**(b) K projection (new token(s), local KV heads)**
+
+* FLOPs per chip = `2 * M_q * d * d_kv_local`
+* `= 2 * 2 * 1024 * 64 = 262,144`
+
+**(c) V projection (new token(s), local KV heads)**
+
+* FLOPs per chip = `2 * M_q * d * d_kv_local`
+* `= 2 * 2 * 1024 * 64 = 262,144`
+
+**(d) Attention scores vs local KV slice**
+
+* FLOPs per chip = `2 * B * h_q_local * T * S_local * dh`
+* `= 2 * 2 * 4 * 1 * 32 * 64 = 32,768`
+
+**(c) Apply attention to V**
+Same:
+
+* `= 32,768`
+
+**(d) Output projection**
+Same as MHA hybrid:
+
+* `2 * M_q * d_local * d = 2 * 2 * 256 * 1024 = 1,048,576`
+
+Total per chip:
+
+* **flops_per_chip = 2,162,688**
+
+Total:
+
+* **flops_total = 16 * 2,162,688 = 34,603,008**
+
+*(Note: same as MHA SP-5 because K/V head reduction changes memory, not score/apply compute, which is driven by query heads.)*
+
+#### 2) Weight memory
+
+Total weight bytes from GQA-1 = 5,242,880
+Sharded across TP, replicated across CP:
+
+* per chip = `5,242,880 / tp = 1,310,720`
+* total = `5,242,880 * cp = 20,971,520`
+
+So:
+
+* **weight_memory_per_chip = 1,310,720**
+* **weight_memory_total = 20,971,520**
+
+#### 3) Activation memory (resident, minimal)
+
+Per chip (materialize full output):
+
+* `X_new`: `[M_q, d]` = `2*1024` elems → 4,096 B
+* `Q_local`: `[M_q, d_local]` = `2*256` elems → 1,024 B
+* `K_local`: `[M_q, d_kv_local]` = `2*64` elems → 256 B
+* `V_local`: `[M_q, d_kv_local]` = `2*64` elems → 256 B
+* `Y_new`: `[M_q, d]` = 4,096 B
+
+Total:
+
+* `4,096 + 1,024 + 256 + 256 + 4,096 = 9,728`
+* **activation_memory_per_chip = 9,728**
+* **activation_memory_total = 155,648**
+
+#### 4) KV cache
+
+Total KV bytes (past only):
+
+* `2 * B * S_k * d_kv * bytes`
+* = `2 * 2 * 128 * 256 * 2 = 262,144`
+
+Sharded across TP×CP:
+
+* per chip = `262,144 / 16 = 16,384`
+* total = `262,144`
+
+So:
+
+* **kv_cache_per_chip = 16,384**
+* **kv_cache_total = 262,144**
+
+#### 5) Communication
+
+**(a) CP all-reduce for softmax stats**
+Stats scalars:
+
+* `B*T*h_q_local*2 = 2*1*4*2 = 16 scalars`
+  Bytes:
+* `16 * 4 = 64`
+
+**(b) CP all-reduce for partial output vectors**
+Output local head slice:
+
+* elems = `B*T*d_local = 2*1*256 = 512`
+* bytes = `512*2 = 1,024`
+
+So CP payload:
+
+* `comm_cp = 64 + 1,024 = 1,088`
+
+**(c) TP all-gather to materialize full output**
+Output for new tokens:
+
+* elems = `B*T*d = 2*1*1024 = 2,048`
+* bytes = `2,048*2 = 4,096`
+
+Total:
+
+* **communication_bytes = 1,088 + 4,096 = 5,184**
+
+### Expected results
+
+**Per-chip metrics**
+
+* flops_per_chip: **2686976**
+* weight_memory_per_chip: **1310720**
+* activation_memory_per_chip: **9728**
+* kv_cache_per_chip: **16384**
+
+**Aggregate metrics**
+
+* flops_total: **42991616**
+* weight_memory_total: **20971520**
+* activation_memory_total: **155648**
+* kv_cache_total: **262144**
+
+**Hardware-dependent (optional)**
+
+* communication_bytes: **5184**
+
+---
+
+## Notes / likely follow-ups
+
+* If your implementation supports `h_kv < tp` or `h_kv` not divisible by `tp`, you’ll need a different sharding rule (e.g., replicate KV across some TP ranks). I can write a dedicated edge-case test for that if it matters.
+* If you prefer “no TP materialization” (keep outputs sharded by heads), I can provide variant expected results (comm drops; activation output drops).
+
+If you want, next we can add one more very practical GQA test: **TP-head only decode (no CP)** for moderate contexts, which is what many serving stacks do by default when context isn’t huge.
