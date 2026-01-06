@@ -49,35 +49,3 @@ class ModelIR(BaseModel):
     num_layers: int
     vocab_size: int
     layers: List[LayerSpecs]
-
-class ParallelismConfig(BaseModel):
-    tp_size: int = 1
-    pp_size: int = 1
-    dp_size: int = 1
-    sp_size: int = 1 # sequence parallelism
-    
-    batch_size: int = 1
-    input_seq_len: int = 128
-    output_seq_len: int = 128
-
-class EstimateResult(BaseModel):
-    # Time
-    total_latency_ms: float
-    time_to_first_token_ms: float # TTFT (Prefill)
-    time_per_output_token_ms: float # TPOT (Decode)
-    total_throughput_tokens_s: float
-    
-    # Memory (GB)
-    weights_mem_gb: float
-    kv_cache_mem_gb: float
-    activation_mem_gb: float
-    total_mem_gb: float
-    max_mem_capacity_gb: float
-    
-    # Bottleneck Analysis
-    compute_bound_percent: float # 0-100
-    memory_bound_percent: float # 0-100
-    comm_bound_percent: float # 0-100
-    
-    # Detailed Breakdown (optional, for drilldown)
-    # layers: List[LayerEstimate]

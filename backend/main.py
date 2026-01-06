@@ -8,10 +8,10 @@ import os
 # Load environment variables from .env file
 load_dotenv()
 
-from .models import HardwareSpecs, ParallelismConfig, ModelIR
+from .models import HardwareSpecs, ModelIR
 from .hardware_library import get_nvl72_specs, get_nvl72_rack_specs, list_available_configs, load_hardware_config
 from .model_library import list_available_models, load_model_config, get_model_metadata
-from .estimator import estimate_performance
+# Legacy estimator removed; use stateless config_service functions instead
 from . import config_service  # Pure functions module
 
 app = FastAPI()
@@ -471,36 +471,4 @@ def estimate_deployment(config: DeploymentConfig):
         raise HTTPException(status_code=500, detail=f"Estimation failed: {str(e)}")
 
 
-# ============================================================
-# EXISTING ENDPOINT: Original Estimation Flow
-# ============================================================
-
-@app.post("/estimate")
-def run_estimation(req: EstimateRequest):
-    # 1. Load Hardware
-    if req.hardware_preset == "nvl72_rack":
-        hw = get_nvl72_rack_specs()
-    elif req.hardware_preset == "nvl72_single":
-        hw = get_nvl72_specs()
-    else:
-        raise HTTPException(status_code=404, detail="Hardware preset not found")
-
-    # 2. Load Model Config
-    try:
-        # Load pre-validated model config
-        ir = load_model_config(req.model_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load model: {str(e)}")
-        
-    # 3. Parallel Config
-    par = ParallelismConfig(
-        tp_size=req.tp_size,
-        batch_size=req.batch_size,
-        input_seq_len=req.input_seq,
-        output_seq_len=req.output_seq
-    )
-    
-    # 4. Estimate
-    result = estimate_performance(hw, ir, par)
-    
-    return result
+# Legacy "/estimate" endpoint removed in favor of stateless system metrics endpoints.
