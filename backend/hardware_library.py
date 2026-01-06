@@ -5,7 +5,7 @@ from typing import Dict, List
 from .models import HardwareSpecs
 
 # Get the hardware_configs directory path
-HARDWARE_CONFIGS_DIR = Path(__file__).parent.parent / "hardware_configs"
+HARDWARE_CONFIGS_DIR = Path(__file__).parent / "data" / "hardware_configs"
 
 
 def load_hardware_config(config_name: str) -> HardwareSpecs:

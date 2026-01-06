@@ -48,7 +48,7 @@ Estimate *achievable* performance (latency, throughput, memory, cost, efficiency
 ### App structure
 
 1. **Hardware & System Library (editable)** ✅
-    - JSON-based configs in `hardware_configs/` directory
+    - JSON-based configs in `backend/data/hardware_configs/` directory
     - Per chip + system profile: peak FLOPs by dtype, HBM size/bw, interconnect bw/lat
     - Available configs: GB200 single, NVL-72 rack, H100 80GB
     - Easily portable to other projects (standard JSON format)
