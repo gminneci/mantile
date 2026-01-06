@@ -1,7 +1,12 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
+from dotenv import load_dotenv
+import os
+
+# Load environment variables from .env file
+load_dotenv()
 
 from .models import HardwareSpecs, ParallelismConfig, ModelIR
 from .hardware_library import get_nvl72_specs, get_nvl72_rack_specs, list_available_configs, load_hardware_config
@@ -116,6 +121,99 @@ def get_layer_types():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/config/layers")
+def get_layers_info():
+    """
+    DEPRECATED: Use /api/layers with model_id parameter instead.
+    Get detailed information about all layers in the model.
+    Returns layer types, counts, and available parallelism strategies.
+    """
+    try:
+        if not config_service.model_ir:
+            raise HTTPException(status_code=400, detail="Model not loaded")
+        
+        # Group layers by type
+        layer_info = {}
+        for layer in config_service.model_ir.layers:
+            layer_type = layer.module_type
+            if layer_type not in layer_info:
+                layer_info[layer_type] = {
+                    "type": layer_type,
+                    "count": 0,
+                    "sample_layer": {
+                        "name": layer.name,
+                        "input_dim": layer.input_dim,
+                        "output_dim": layer.output_dim,
+                    },
+                    "available_parallelism": []
+                }
+            layer_info[layer_type]["count"] += 1
+        
+        # Add available parallelism strategies per layer type
+        for layer_type in layer_info:
+            if layer_type == "attention":
+                layer_info[layer_type]["available_parallelism"] = ["tensor_parallel", "context_parallel"]
+            elif layer_type == "feedforward":
+                layer_info[layer_type]["available_parallelism"] = ["tensor_parallel", "sequence_parallel"]
+            elif layer_type == "norm":
+                layer_info[layer_type]["available_parallelism"] = []  # replicated
+            elif layer_type == "embedding":
+                layer_info[layer_type]["available_parallelism"] = []  # replicated
+            
+            # All layers support dtype selection
+            layer_info[layer_type]["available_dtypes"] = ["fp32", "fp16", "bf16", "fp8", "int8"]
+        
+        return {"layers": list(layer_info.values())}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/layers")
+def get_layers_info_stateless(model_id: str):
+    """
+    Stateless endpoint: Get layer information for a specific model.
+    No server-side state required.
+    """
+    try:
+        # Build ModelIR on-the-fly
+        model_ir = build_model_ir(model_id)
+        
+        # Group layers by type
+        layer_info = {}
+        for layer in model_ir.layers:
+            layer_type = layer.module_type
+            if layer_type not in layer_info:
+                layer_info[layer_type] = {
+                    "type": layer_type,
+                    "count": 0,
+                    "sample_layer": {
+                        "name": layer.name,
+                        "input_dim": layer.input_dim,
+                        "output_dim": layer.output_dim,
+                    },
+                    "available_parallelism": []
+                }
+            layer_info[layer_type]["count"] += 1
+        
+        # Add available parallelism strategies per layer type
+        for layer_type in layer_info:
+            if layer_type == "attention":
+                layer_info[layer_type]["available_parallelism"] = ["tensor_parallel", "context_parallel"]
+            elif layer_type == "feedforward":
+                layer_info[layer_type]["available_parallelism"] = ["tensor_parallel", "sequence_parallel"]
+            elif layer_type == "norm":
+                layer_info[layer_type]["available_parallelism"] = []  # replicated
+            elif layer_type == "embedding":
+                layer_info[layer_type]["available_parallelism"] = []  # replicated
+            
+            # All layers support dtype selection
+            layer_info[layer_type]["available_dtypes"] = ["fp32", "fp16", "bf16", "fp8", "int8"]
+        
+        return {"layers": list(layer_info.values())}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 class LayerParallelismRequest(BaseModel):
     layer_type: str
     tensor_parallel: int = 1
@@ -145,6 +243,114 @@ def configure_layer_parallelism(req: LayerParallelismRequest):
                 "num_instances": config.num_instances,
             }
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class LayerMetricsRequest(BaseModel):
+    """Stateless request for layer metrics - includes all necessary context."""
+    model_id: str
+    hardware_config: str
+    layer_type: str
+    batch_size: int = 1
+    seq_length: int = 2048
+    dtype: str = "bf16"
+    tensor_parallel: int = 1
+    context_parallel: int = 1
+    sequence_parallel: int = 1
+
+
+@app.post("/config/layer-metrics")
+def compute_layer_metrics(req: LayerMetricsRequest):
+    """
+    Stateless endpoint: Compute metrics for a specific layer type.
+    Builds ModelIR and hardware on-the-fly from request.
+    """
+    try:
+        from .layers import Phase, DataType
+        
+        # Build ModelIR from request
+        model_ir = build_model_ir(req.model_id)
+        hardware = load_hardware_config(req.hardware_config)
+        
+        # Find a representative layer of this type
+        sample_layer_spec = next(
+            (l for l in model_ir.layers if l.module_type == req.layer_type),
+            None
+        )
+        if not sample_layer_spec:
+            raise HTTPException(status_code=404, detail=f"No layers of type {req.layer_type} found")
+        
+        # Build parallelism config from request
+        parallelism = {
+            "tensor_parallel": req.tensor_parallel,
+            "context_parallel": req.context_parallel,
+            "sequence_parallel": req.sequence_parallel,
+        }
+        
+        # Instantiate the layer
+        layer = ConfigurationService._instantiate_layer_static(
+            sample_layer_spec, parallelism, model_ir, hardware
+        )
+        if not layer:
+            raise HTTPException(status_code=500, detail="Failed to instantiate layer")
+        
+        # Compute metrics
+        try:
+            dtype_enum = DataType[req.dtype.upper()]
+        except KeyError:
+            raise HTTPException(status_code=400, detail=f"Invalid dtype: {req.dtype}")
+        
+        metrics = layer.compute_metrics(
+            batch_size=req.batch_size,
+            seq_len=req.seq_length,
+            phase=Phase.PREFILL,
+            dtype=dtype_enum
+        )
+        
+        # Count instances of this layer type
+        num_instances = sum(
+            1 for l in model_ir.layers 
+            if l.module_type == req.layer_type
+        )
+        
+        # Calculate aggregate for all instances of this layer
+        total_weight_memory_gb = (metrics.weight_memory_per_chip * num_instances) / 1e9
+        total_activation_memory_gb = (metrics.activation_memory_per_chip * num_instances) / 1e9
+        total_kv_cache_gb = (metrics.kv_cache_per_chip * num_instances) / 1e9
+        total_flops_tflops = (metrics.flops_per_chip * num_instances) / 1e12
+        
+        # Calculate bottleneck percentages
+        compute_time = total_flops_tflops / hardware.bf16_tflops
+        memory_time = total_weight_memory_gb / (hardware.hbm_bandwidth_gbps / 1000.0)
+        comm_time = 0.001  # Simplified for now
+        total_time = compute_time + memory_time + comm_time
+        
+        return {
+            "layer_type": req.layer_type,
+            "num_instances": num_instances,
+            "num_chips": metrics.num_chips,
+            "parallelism": parallelism,
+            "memory": {
+                "weights_per_chip_gb": metrics.weight_memory_per_chip / 1e9,
+                "activation_per_chip_gb": metrics.activation_memory_per_chip / 1e9,
+                "kv_cache_per_chip_gb": metrics.kv_cache_per_chip / 1e9,
+                "total_weights_gb": total_weight_memory_gb,
+                "total_activation_gb": total_activation_memory_gb,
+                "total_kv_cache_gb": total_kv_cache_gb,
+            },
+            "compute": {
+                "flops_per_chip_tflops": metrics.flops_per_chip / 1e12,
+                "total_flops_tflops": total_flops_tflops,
+            },
+            "bottleneck": {
+                "compute_percent": (compute_time / total_time * 100) if total_time > 0 else 0,
+                "memory_percent": (memory_time / total_time * 100) if total_time > 0 else 0,
+                "comm_percent": (comm_time / total_time * 100) if total_time > 0 else 0,
+            }
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -183,20 +389,60 @@ def calculate_system_requirements(req: SystemRequirementsRequest):
 
 
 class SystemMetricsRequest(BaseModel):
+    """Stateless request for system metrics - includes all necessary context."""
+    model_id: str
+    hardware_config: str
     batch_size: int = 1
     input_seq: int = 2048
     output_seq: int = 128
+    # Layer configurations with parallelism and dtype
+    layers: Dict[str, Dict[str, Any]] = {}
+    # Example: {
+    #   "attention": {"tensor_parallel": 4, "context_parallel": 2, "dtype": "bf16"},
+    #   "feedforward": {"tensor_parallel": 8, "sequence_parallel": 1, "dtype": "bf16"}
+    # }
 
 
 @app.post("/config/system-metrics")
 def compute_system_metrics(req: SystemMetricsRequest):
     """
-    Step 5: Compute full system-level metrics (TTFT, TPOT, throughput, etc).
+    Stateless endpoint: Compute full system-level metrics.
+    Builds ModelIR and hardware on-the-fly from request.
     """
     try:
         from .layers import DataType
         
-        metrics = config_service.compute_system_metrics(
+        # Build ModelIR and hardware from request
+        model_ir = build_model_ir(req.model_id)
+        hardware = load_hardware_config(req.hardware_config)
+        
+        # Build layer configs from request
+        layer_configs = {}
+        for layer_type, config in req.layers.items():
+            # Count instances of this layer type
+            num_instances = sum(
+                1 for layer in model_ir.layers 
+                if layer.module_type == layer_type
+            )
+            
+            from .config_service import LayerConfig
+            layer_configs[layer_type] = LayerConfig(
+                layer_type=layer_type,
+                layer_name=layer_type,
+                parallelism={
+                    "tensor_parallel": config.get("tensor_parallel", 1),
+                    "context_parallel": config.get("context_parallel", 1),
+                    "sequence_parallel": config.get("sequence_parallel", 1),
+                },
+                num_instances=num_instances,
+                dtype=config.get("dtype", "bf16")
+            )
+        
+        # Compute metrics using static method
+        metrics = ConfigurationService.compute_system_metrics_static(
+            model_ir=model_ir,
+            hardware=hardware,
+            layer_configs=layer_configs,
             batch_size=req.batch_size,
             input_seq=req.input_seq,
             output_seq=req.output_seq,
@@ -205,6 +451,8 @@ def compute_system_metrics(req: SystemMetricsRequest):
         
         return metrics
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
