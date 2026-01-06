@@ -4,3 +4,4 @@ pydantic
 transformers
 accelerate
 torch
+python-dotenv

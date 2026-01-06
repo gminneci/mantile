@@ -27,6 +27,7 @@ class LayerConfig:
     layer_name: str
     parallelism: Dict[str, int]  # {"tensor_parallel": 4, "context_parallel": 2, etc}
     num_instances: int = 1  # How many layers of this type (e.g., 80 attention layers)
+    dtype: str = "bf16"  # Numerical precision format
 
 
 @dataclass
@@ -190,11 +191,101 @@ class ConfigurationService:
     
     # Step 4: Minimum System Calculation
     
+    @staticmethod
+    def _instantiate_layer_static(layer_spec, parallelism: Dict[str, int], model_ir: ModelIR, hardware: HardwareSpecs):
+        """
+        Static method to instantiate a layer without instance state.
+        Used for stateless API calls.
+        """
+        # Filter parallelism based on layer type
+        if layer_spec.module_type == "attention":
+            # Attention supports: TP, CP
+            filtered_parallelism = {
+                k: v for k, v in parallelism.items()
+                if k in ["tensor_parallel", "context_parallel", "pipeline_parallel"]
+            }
+            
+            if layer_spec.kv_heads and layer_spec.kv_heads < layer_spec.num_heads:
+                # GQA
+                return GroupedQueryAttentionLayer(
+                    name=layer_spec.name,
+                    layer_idx=layer_spec.layer_idx,
+                    hidden_size=layer_spec.input_dim,
+                    num_heads=layer_spec.num_heads,
+                    num_kv_heads=layer_spec.kv_heads,
+                    head_dim=layer_spec.head_dim,
+                    parallelism=filtered_parallelism
+                )
+            else:
+                # MHA
+                return AttentionLayer(
+                    name=layer_spec.name,
+                    layer_idx=layer_spec.layer_idx,
+                    hidden_size=layer_spec.input_dim,
+                    num_heads=layer_spec.num_heads,
+                    head_dim=layer_spec.head_dim,
+                    parallelism=filtered_parallelism
+                )
+        
+        elif layer_spec.module_type == "feedforward":
+            # MLP supports: TP, SP (NOT CP)
+            filtered_parallelism = {
+                k: v for k, v in parallelism.items()
+                if k in ["tensor_parallel", "sequence_parallel", "pipeline_parallel"]
+            }
+            
+            if layer_spec.hidden_dim and layer_spec.hidden_dim > layer_spec.input_dim * 2:
+                # Gated MLP
+                return GatedMLPLayer(
+                    name=layer_spec.name,
+                    layer_idx=layer_spec.layer_idx,
+                    hidden_size=layer_spec.input_dim,
+                    intermediate_size=layer_spec.hidden_dim,
+                    parallelism=filtered_parallelism
+                )
+            else:
+                # Regular MLP
+                return MLPLayer(
+                    name=layer_spec.name,
+                    layer_idx=layer_spec.layer_idx,
+                    hidden_size=layer_spec.input_dim,
+                    intermediate_size=layer_spec.hidden_dim or layer_spec.input_dim * 4,
+                    parallelism=filtered_parallelism
+                )
+        
+        elif layer_spec.module_type == "norm":
+            # Norm doesn't use parallelism (replicated)
+            return NormLayer(
+                name=layer_spec.name,
+                layer_idx=layer_spec.layer_idx,
+                hidden_size=layer_spec.input_dim,
+                has_bias=False,
+                parallelism={}
+            )
+        
+        elif layer_spec.module_type == "embedding":
+            # Embedding doesn't use parallelism (replicated)
+            return EmbeddingLayer(
+                name=layer_spec.name,
+                vocab_size=model_ir.vocab_size,
+                hidden_size=model_ir.hidden_size,
+                parallelism={}
+            )
+        
+        else:
+            return None
+
     def _instantiate_layer(self, layer_spec, parallelism: Dict[str, int]):
         """
         Instantiate an actual layer object from spec.
         Only passes supported parallelism types for each layer.
         """
+        return ConfigurationService._instantiate_layer_static(
+            layer_spec, parallelism, self.model_ir, self.hardware
+        )
+
+    def _instantiate_layer_old(self, layer_spec, parallelism: Dict[str, int]):
+        """Old implementation kept for reference during migration."""
         # Filter parallelism based on layer type
         if layer_spec.module_type == "attention":
             # Attention supports: TP, CP
@@ -349,6 +440,171 @@ class ConfigurationService:
             hw_capacity_gb=hw_capacity_gb
         )
     
+    @staticmethod
+    def compute_system_metrics_static(
+        model_ir: ModelIR,
+        hardware: HardwareSpecs,
+        layer_configs: Dict[str, LayerConfig],
+        batch_size: int = 1,
+        input_seq: int = 2048,
+        output_seq: int = 128,
+        dtype: DataType = DataType.BF16
+    ) -> Dict:
+        """
+        Static method to compute system metrics without instance state.
+        Used for stateless API calls.
+        """
+        # Prefill phase metrics
+        prefill_metrics = ConfigurationService._compute_phase_metrics_static(
+            model_ir=model_ir,
+            hardware=hardware,
+            layer_configs=layer_configs,
+            batch_size=batch_size,
+            seq_length=input_seq,
+            phase=Phase.PREFILL,
+            dtype=dtype
+        )
+        
+        # Decode phase metrics (per token)
+        decode_metrics = ConfigurationService._compute_phase_metrics_static(
+            model_ir=model_ir,
+            hardware=hardware,
+            layer_configs=layer_configs,
+            batch_size=batch_size,
+            seq_length=1,  # Decode is one token at a time
+            phase=Phase.DECODE,
+            dtype=dtype
+        )
+        
+        # Calculate latencies
+        # Use BF16 compute for now
+        peak_tflops_per_chip = hardware.bf16_tflops
+        hbm_bw_per_chip = hardware.hbm_bandwidth_gbps
+        
+        # Prefill latency (TTFT)
+        prefill_compute_time_ms = (prefill_metrics["total_flops"] / 1e12) / peak_tflops_per_chip * 1000
+        prefill_memory_time_ms = (prefill_metrics["total_weight_memory"] / 1e9) / hbm_bw_per_chip * 1000
+        ttft_ms = max(prefill_compute_time_ms, prefill_memory_time_ms)
+        
+        # Decode latency (TPOT)
+        decode_compute_time_ms = (decode_metrics["total_flops"] / 1e12) / peak_tflops_per_chip * 1000
+        decode_memory_time_ms = (decode_metrics["total_weight_memory"] / 1e9) / hbm_bw_per_chip * 1000
+        tpot_ms = max(decode_compute_time_ms, decode_memory_time_ms)
+        
+        # Throughput (tokens/sec)
+        throughput_tokens_s = 1000.0 / tpot_ms if tpot_ms > 0 else 0
+        
+        # Total latency for full sequence
+        total_latency_ms = ttft_ms + (tpot_ms * output_seq)
+        
+        # Bottleneck analysis
+        if prefill_compute_time_ms > prefill_memory_time_ms * 1.2:
+            bottleneck = "compute"
+        elif prefill_memory_time_ms > prefill_compute_time_ms * 1.2:
+            bottleneck = "memory"
+        else:
+            bottleneck = "balanced"
+        
+        return {
+            "ttft_ms": ttft_ms,
+            "tpot_ms": tpot_ms,
+            "throughput_tokens_s": throughput_tokens_s,
+            "total_latency_ms": total_latency_ms,
+            "prefill": {
+                "flops_total": prefill_metrics["total_flops"],
+                "flops_per_chip": prefill_metrics["flops_per_chip"],
+                "compute_time_ms": prefill_compute_time_ms,
+                "memory_time_ms": prefill_memory_time_ms,
+            },
+            "decode": {
+                "flops_total": decode_metrics["total_flops"],
+                "flops_per_chip": decode_metrics["flops_per_chip"],
+                "compute_time_ms": decode_compute_time_ms,
+                "memory_time_ms": decode_memory_time_ms,
+            },
+            "memory": {
+                "weight_memory_gb": prefill_metrics["total_weight_memory"] / 1e9,
+                "activation_memory_gb": prefill_metrics["total_activation_memory"] / 1e9,
+                "kv_cache_gb": prefill_metrics["total_kv_cache"] / 1e9,
+                "total_memory_gb": (
+                    prefill_metrics["total_weight_memory"] +
+                    prefill_metrics["total_activation_memory"] +
+                    prefill_metrics["total_kv_cache"]
+                ) / 1e9,
+                "memory_per_chip_gb": prefill_metrics["memory_per_chip"],
+                "hw_capacity_gb": hardware.hbm_capacity_gb,
+            },
+            "system": {
+                "num_chips": prefill_metrics["num_chips"],
+                "bottleneck": bottleneck,
+                "fits_on_hardware": prefill_metrics["memory_per_chip"] <= hardware.hbm_capacity_gb,
+            }
+        }
+    
+    @staticmethod
+    def _compute_phase_metrics_static(
+        model_ir: ModelIR,
+        hardware: HardwareSpecs,
+        layer_configs: Dict[str, LayerConfig],
+        batch_size: int,
+        seq_length: int,
+        phase: Phase,
+        dtype: DataType
+    ) -> Dict:
+        """Static method to compute metrics for a single phase."""
+        total_flops = 0.0
+        total_weight_memory = 0.0
+        total_activation_memory = 0.0
+        total_kv_cache = 0.0
+        max_chips = 1
+        
+        for layer_type, config in layer_configs.items():
+            # Find a representative layer
+            sample_layer_spec = next(
+                (l for l in model_ir.layers if l.module_type == layer_type),
+                None
+            )
+            if not sample_layer_spec:
+                continue
+            
+            # Instantiate layer using static method
+            layer = ConfigurationService._instantiate_layer_static(
+                sample_layer_spec, config.parallelism, model_ir, hardware
+            )
+            if not layer:
+                continue
+            
+            # Compute metrics
+            metrics = layer.compute_metrics(
+                batch_size=batch_size,
+                seq_len=seq_length,
+                phase=phase,
+                dtype=dtype
+            )
+            
+            # Aggregate
+            total_flops += metrics.flops_total * config.num_instances
+            total_weight_memory += metrics.weight_memory_per_chip * config.num_instances
+            total_activation_memory += metrics.activation_memory_per_chip * config.num_instances
+            total_kv_cache += metrics.kv_cache_per_chip * config.num_instances
+            max_chips = max(max_chips, metrics.num_chips)
+        
+        memory_per_chip = (
+            total_weight_memory + 
+            total_activation_memory + 
+            total_kv_cache
+        ) / 1e9 if max_chips > 0 else 0
+        
+        return {
+            "total_flops": total_flops,
+            "flops_per_chip": total_flops / max_chips if max_chips > 0 else 0,
+            "total_weight_memory": total_weight_memory,
+            "total_activation_memory": total_activation_memory,
+            "total_kv_cache": total_kv_cache,
+            "memory_per_chip": memory_per_chip,
+            "num_chips": max_chips,
+        }
+
     # Step 5: System-Level Metrics
     
     def compute_system_metrics(

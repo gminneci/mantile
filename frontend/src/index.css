@@ -1,19 +1,22 @@
 :root {
-  --color-bg: #0B0C10;
-  --color-surface: #1F2833;
-  --color-text-primary: #C5C6C7;
-  --color-text-secondary: #8892b0;
-  --color-accent: #66FCF1;
-  --color-accent-dim: #45A29E;
-  --color-danger: #ff4d4d;
+  --color-bg: #030D2B;
+  --color-surface: #526497;
+  --color-text-primary: #E7E3DA;
+  --color-text-secondary: #E7E3DA;
+  --color-accent: #29AF83;
+  --color-accent-dim: #4D5AF4;
+  --color-highlight-coral: #F86A56;
+  --color-highlight-teal: #29AF83;
+  --color-highlight-blue: #4D5AF4;
+  --color-danger: #F86A56;
   
   --font-main: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
   
   --radius-md: 8px;
   --radius-lg: 12px;
   
-  --shadow-card: 0 4px 6px rgba(0, 0, 0, 0.3);
-  --shadow-glow: 0 0 15px rgba(102, 252, 241, 0.15);
+  --shadow-card: 0 4px 6px rgba(3, 13, 43, 0.3);
+  --shadow-glow: 0 0 15px rgba(41, 175, 131, 0.15);
 }
 
 * {
@@ -55,21 +58,21 @@ input, select {
 }
 
 .card {
-  background: var(--color-surface);
+  background: #030D2B;
   border-radius: var(--radius-lg);
   padding: 1.5rem;
   box-shadow: var(--shadow-card);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid #526497;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .card:hover {
-  border-color: rgba(102, 252, 241, 0.2);
+  border-color: #4D5AF4;
 }
 
 .btn-primary {
   background: var(--color-accent);
-  color: #0B0C10;
+  color: #030D2B;
   padding: 0.75rem 1.5rem;
   border-radius: var(--radius-md);
   font-weight: 600;
@@ -98,7 +101,7 @@ input, select {
 
 .input-field:focus {
   outline: none;
-  border-color: var(--color-accent);
+  border-color: #4D5AF4;
 }
 
 .label {
@@ -130,10 +133,10 @@ input, select {
 }
 
 .sidebar {
-  background: rgba(31, 40, 51, 0.5);
+  background: #1D2F61;
   backdrop-filter: blur(10px);
   padding: 2rem;
-  border-right: 1px solid rgba(255, 255, 255, 0.05);
+  border-right: 1px solid #29AF83;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -146,4 +149,53 @@ input, select {
   display: flex;
   flex-direction: column;
   gap: 2rem;
+}
+
+/* Global focus styles */
+button:focus-visible,
+a:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 2px solid #4D5AF4;
+  outline-offset: 2px;
+}
+
+.btn-primary:focus-visible {
+  box-shadow: 0 0 0 3px rgba(77, 90, 244, 0.35);
+}
+
+/* Color Utilities */
+.bg-accent { background-color: #29AF83; }
+.bg-surface { background-color: #526497; }
+.text-white { color: #E7E3DA; }
+.text-dark { color: #030D2B; }
+.text-coral { color: #F48471; }
+.text-highlight-coral { color: #F86A56; }
+.text-highlight-blue { color: #4D5AF4; }
+.hover\:text-accent:hover { color: #29AF83; }
+.accent-accent { accent-color: #29AF83; }
+
+/* Metrics Card Variant */
+.metrics-card {
+  background: #E7E3DA;
+  border: 1px solid #E7E3DA;
+}
+.metrics-card .text-white { color: #030D2B; }
+.metrics-card .text-dim { color: #030D2B; opacity: 0.8; }
+.metrics-card .text-accent { color: #4D5AF4; }
+
+/* Coral theme overrides for right panel (Configuration 2) */
+.coral-theme .text-accent { color: #F48471; }
+.coral-theme .bg-accent { background-color: #F48471; }
+.coral-theme .hover\:text-accent:hover { color: #F48471; }
+.coral-theme .accent-accent { accent-color: #F48471; }
+.coral-theme .card { border-color: #526497; }
+.coral-theme .card:hover { border-color: #526497; }
+.coral-theme .input-field { border-color: #526497; }
+.coral-theme .input-field:focus { border-color: #526497; }
+.card input[type="range"] { border: none; outline: none; }
+
+/* Remove border for dtype select on right panel */
+.coral-theme .dtype-select {
+  border: none !important;
 }

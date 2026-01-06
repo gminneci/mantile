@@ -1,42 +1,95 @@
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
+.app-container {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  min-height: 100vh;
+  background-color: #030D2B;
+  width: 100vw;
+  overflow-x: hidden;
+}
+
+.sidebar {
+  width: 340px;
+  min-width: 340px;
+  background-color: #1D2F61;
   padding: 2rem;
-  text-align: center;
+  overflow-y: auto;
+  border-right: 1px solid #29AF83;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
-}
-
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.sidebar-right {
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: 340px;
+  min-width: 340px;
+  height: 100vh;
+  background-color: #1D2F61;
+  padding: 2rem;
+  overflow-y: auto;
+  border-left: 1px solid #29AF83;
+  z-index: 100;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
+.main-content {
+  flex: 1;
+  padding: 2rem 3rem;
+  overflow-y: auto;
+  min-width: 0;
+  transition: margin-right 0.3s ease;
+}
+
+.main-content.with-comparison {
+  margin-right: 340px;
 }
 
 .card {
-  padding: 2em;
+  background-color: #030D2B;
+  border: 1px solid #526497;
+  border-radius: 8px;
+  padding: 1.5rem;
+  transition: border-color 0.2s;
 }
 
-.read-the-docs {
-  color: #888;
+.card:hover {
+  border-color: #526497;
+}
+
+.input-field {
+  width: 100%;
+  padding: 0.625rem 0.875rem;
+  background-color: #030D2B;
+  color: #E7E3DA;
+  border: 1px solid #526497;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  transition: all 0.2s;
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: #526497;
+  background-color: #1D2F61;
+}
+
+.label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #8892b0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.5rem;
+}
+
+.text-accent {
+  color: #29AF83;
+}
+
+.text-dim {
+  color: #E7E3DA;
+}
+
+.text-bg {
+  color: #030D2B;
 }
