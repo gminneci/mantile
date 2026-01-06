@@ -95,7 +95,7 @@ Estimate *achievable* performance (latency, throughput, memory, cost, efficiency
 - `backend/layers/mlp.py`:
   - MLPLayer (2-proj), GatedMLPLayer (3-proj SwiGLU)
   - TP, SP support
-  - Test suite: mlp_tests.md
+  - Test suite: docs/mlp_tests.md
 - `backend/layers/norm.py`:
   - NormLayer (LayerNorm, RMSNorm)
 - `backend/layers/embedding.py`:
