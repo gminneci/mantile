@@ -6,7 +6,7 @@ This module is UI-agnostic and can be called from FastAPI, Streamlit, or CLI.
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from backend.models import HardwareSpecs, ModelIR
-from backend.ir_builder import build_model_ir
+from backend.model_library import load_model_config
 from backend.hardware_library import load_hardware_config, list_available_configs
 from backend.layers import (
     AttentionLayer,
@@ -89,8 +89,8 @@ class ConfigurationService:
         return self.hardware
     
     def load_model(self, model_id: str) -> ModelIR:
-        """Load model IR from HuggingFace."""
-        self.model_ir = build_model_ir(model_id)
+        """Load pre-validated model config."""
+        self.model_ir = load_model_config(model_id)
         return self.model_ir
     
     # Step 2: Validation & Parameter Check

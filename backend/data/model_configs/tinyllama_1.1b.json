@@ -1,0 +1,631 @@
+{
+  "model_id": "tinyllama_1.1b",
+  "hf_model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "name": "TinyLlama-1.1B-Chat-v1.0",
+  "hidden_size": 2048,
+  "num_layers": 22,
+  "vocab_size": 32000,
+  "total_params": 1034465280,
+  "total_params_formatted": "1.0B",
+  "architecture": "LlamaForCausalLM",
+  "validated": true,
+  "validation_notes": "1.0B params confirmed, GQA with 4 KV heads, SwiGLU MLP",
+  "layers": [
+    {
+      "name": "layer_0_attn",
+      "layer_idx": 0,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_0_mlp",
+      "layer_idx": 0,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_0_norm",
+      "layer_idx": 0,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_1_attn",
+      "layer_idx": 1,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_1_mlp",
+      "layer_idx": 1,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_1_norm",
+      "layer_idx": 1,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_2_attn",
+      "layer_idx": 2,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_2_mlp",
+      "layer_idx": 2,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_2_norm",
+      "layer_idx": 2,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_3_attn",
+      "layer_idx": 3,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_3_mlp",
+      "layer_idx": 3,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_3_norm",
+      "layer_idx": 3,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_4_attn",
+      "layer_idx": 4,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_4_mlp",
+      "layer_idx": 4,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_4_norm",
+      "layer_idx": 4,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_5_attn",
+      "layer_idx": 5,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_5_mlp",
+      "layer_idx": 5,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_5_norm",
+      "layer_idx": 5,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_6_attn",
+      "layer_idx": 6,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_6_mlp",
+      "layer_idx": 6,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_6_norm",
+      "layer_idx": 6,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_7_attn",
+      "layer_idx": 7,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_7_mlp",
+      "layer_idx": 7,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_7_norm",
+      "layer_idx": 7,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_8_attn",
+      "layer_idx": 8,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_8_mlp",
+      "layer_idx": 8,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_8_norm",
+      "layer_idx": 8,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_9_attn",
+      "layer_idx": 9,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_9_mlp",
+      "layer_idx": 9,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_9_norm",
+      "layer_idx": 9,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_10_attn",
+      "layer_idx": 10,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_10_mlp",
+      "layer_idx": 10,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_10_norm",
+      "layer_idx": 10,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_11_attn",
+      "layer_idx": 11,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_11_mlp",
+      "layer_idx": 11,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_11_norm",
+      "layer_idx": 11,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_12_attn",
+      "layer_idx": 12,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_12_mlp",
+      "layer_idx": 12,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_12_norm",
+      "layer_idx": 12,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_13_attn",
+      "layer_idx": 13,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_13_mlp",
+      "layer_idx": 13,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_13_norm",
+      "layer_idx": 13,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_14_attn",
+      "layer_idx": 14,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_14_mlp",
+      "layer_idx": 14,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_14_norm",
+      "layer_idx": 14,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_15_attn",
+      "layer_idx": 15,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_15_mlp",
+      "layer_idx": 15,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_15_norm",
+      "layer_idx": 15,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_16_attn",
+      "layer_idx": 16,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_16_mlp",
+      "layer_idx": 16,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_16_norm",
+      "layer_idx": 16,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_17_attn",
+      "layer_idx": 17,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_17_mlp",
+      "layer_idx": 17,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_17_norm",
+      "layer_idx": 17,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_18_attn",
+      "layer_idx": 18,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_18_mlp",
+      "layer_idx": 18,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_18_norm",
+      "layer_idx": 18,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_19_attn",
+      "layer_idx": 19,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_19_mlp",
+      "layer_idx": 19,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_19_norm",
+      "layer_idx": 19,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_20_attn",
+      "layer_idx": 20,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_20_mlp",
+      "layer_idx": 20,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_20_norm",
+      "layer_idx": 20,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    },
+    {
+      "name": "layer_21_attn",
+      "layer_idx": 21,
+      "module_type": "attention",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 9437184,
+      "num_heads": 32,
+      "head_dim": 64,
+      "kv_heads": 4
+    },
+    {
+      "name": "layer_21_mlp",
+      "layer_idx": 21,
+      "module_type": "feedforward",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 34603008,
+      "hidden_dim": 5632
+    },
+    {
+      "name": "layer_21_norm",
+      "layer_idx": 21,
+      "module_type": "norm",
+      "input_dim": 2048,
+      "output_dim": 2048,
+      "parameter_count": 2048
+    }
+  ]
+}

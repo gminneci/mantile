@@ -10,7 +10,7 @@ load_dotenv()
 
 from .models import HardwareSpecs, ParallelismConfig, ModelIR
 from .hardware_library import get_nvl72_specs, get_nvl72_rack_specs, list_available_configs, load_hardware_config
-from .ir_builder import build_model_ir
+from .model_library import list_available_models, load_model_config, get_model_metadata
 from .estimator import estimate_performance
 from .config_service import ConfigurationService
 
@@ -54,6 +54,32 @@ def get_hardware_details(config_name: str):
     try:
         hw = load_hardware_config(config_name)
         return hw.dict()
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/models")
+def list_models():
+    """List all available pre-validated model configurations."""
+    models = list_available_models()
+    # Get metadata for each model
+    model_list = []
+    for model_id in models:
+        try:
+            metadata = get_model_metadata(model_id)
+            model_list.append(metadata)
+        except Exception as e:
+            # Skip models that fail to load
+            continue
+    return {"models": model_list}
+
+
+@app.get("/models/{model_id}")
+def get_model_details(model_id: str):
+    """Get details for a specific model configuration."""
+    try:
+        metadata = get_model_metadata(model_id)
+        return metadata
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -175,8 +201,8 @@ def get_layers_info_stateless(model_id: str):
     No server-side state required.
     """
     try:
-        # Build ModelIR on-the-fly
-        model_ir = build_model_ir(model_id)
+        # Load pre-validated model config
+        model_ir = load_model_config(model_id)
         
         # Group layers by type
         layer_info = {}
@@ -269,8 +295,8 @@ def compute_layer_metrics(req: LayerMetricsRequest):
     try:
         from .layers import Phase, DataType
         
-        # Build ModelIR from request
-        model_ir = build_model_ir(req.model_id)
+        # Load pre-validated model config
+        model_ir = load_model_config(req.model_id)
         hardware = load_hardware_config(req.hardware_config)
         
         # Find a representative layer of this type
@@ -412,8 +438,8 @@ def compute_system_metrics(req: SystemMetricsRequest):
     try:
         from .layers import DataType
         
-        # Build ModelIR and hardware from request
-        model_ir = build_model_ir(req.model_id)
+        # Load pre-validated model config and hardware
+        model_ir = load_model_config(req.model_id)
         hardware = load_hardware_config(req.hardware_config)
         
         # Build layer configs from request
@@ -573,10 +599,10 @@ def run_estimation(req: EstimateRequest):
     else:
         raise HTTPException(status_code=404, detail="Hardware preset not found")
 
-    # 2. Build IR
+    # 2. Load Model Config
     try:
-        # Generic builder works for any transformer architecture
-        ir = build_model_ir(req.model_id)
+        # Load pre-validated model config
+        ir = load_model_config(req.model_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load model: {str(e)}")
         
