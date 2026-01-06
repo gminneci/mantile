@@ -156,6 +156,19 @@ def serialize_model_ir(model_ir: ModelIR, hf_model_id: str, model_id: str) -> di
             "specs": specs
         })
     
+    # Add embedding layer (always present but not in model_ir.layers)
+    embedding_params = model_ir.vocab_size * model_ir.hidden_size
+    layer_types.append({
+        "name": "embedding",
+        "class": "EmbeddingLayer",
+        "count": 1,
+        "specs": {
+            "vocab_size": model_ir.vocab_size,
+            "hidden_size": model_ir.hidden_size,
+            "parameter_count": embedding_params
+        }
+    })
+    
     # Calculate total params
     total_params = calculate_total_params(model_ir)
     

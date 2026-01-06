@@ -79,12 +79,20 @@ def load_model_config(model_id: str) -> ModelIR:
             
             # Create count instances of this layer type
             for i in range(count):
+                # For embedding layers, use vocab_size as input, hidden_size as output
+                if module_type == "embedding":
+                    input_dim = specs.get("vocab_size", data["vocab_size"])
+                    output_dim = specs.get("hidden_size", data["hidden_size"])
+                else:
+                    input_dim = specs["input_dim"]
+                    output_dim = specs["output_dim"]
+                
                 layer_spec = LayerSpecs(
                     name=f"layer_{layer_idx}_{module_type}",
                     layer_idx=layer_idx,
                     module_type=module_type,
-                    input_dim=specs["input_dim"],
-                    output_dim=specs["output_dim"],
+                    input_dim=input_dim,
+                    output_dim=output_dim,
                     parameter_count=specs["parameter_count"],
                     num_heads=specs.get("num_heads"),
                     head_dim=specs.get("head_dim"),

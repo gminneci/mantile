@@ -48,8 +48,18 @@
         "hidden_size": 2048,
         "has_bias": false
       }
+    },
+    {
+      "name": "embedding",
+      "class": "EmbeddingLayer",
+      "count": 1,
+      "specs": {
+        "vocab_size": 32000,
+        "hidden_size": 2048,
+        "parameter_count": 65536000
+      }
     }
   ],
   "validated": true,
-  "validation_notes": "1.0B params confirmed, GQA (4 KV heads), SwiGLU MLP, 22 layers"
+  "validation_notes": "1.0B params confirmed, GQA (4 KV heads), SwiGLU MLP, 22 layers, embedding included"
 }
