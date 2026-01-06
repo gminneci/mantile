@@ -12,12 +12,9 @@ from .models import HardwareSpecs, ParallelismConfig, ModelIR
 from .hardware_library import get_nvl72_specs, get_nvl72_rack_specs, list_available_configs, load_hardware_config
 from .model_library import list_available_models, load_model_config, get_model_metadata
 from .estimator import estimate_performance
-from .config_service import ConfigurationService
+from . import config_service  # Pure functions module
 
 app = FastAPI()
-
-# Global service instance (in production, use dependency injection)
-config_service = ConfigurationService()
 
 # CORS Middleware
 app.add_middleware(
@@ -96,18 +93,16 @@ class LoadModelRequest(BaseModel):
 @app.post("/config/load")
 def load_model_and_hardware(req: LoadModelRequest):
     """
-    Step 1: Load model and hardware.
-    Returns model info and hardware specs.
+    Stateless: Load model and hardware, return info and validation.
+    No state stored on server - client receives all data.
     """
     try:
-        # Load hardware
-        hw = config_service.load_hardware(req.hardware_config)
-        
-        # Load model
-        model_ir = config_service.load_model(req.model_id)
+        # Load model and hardware
+        model_ir = load_model_config(req.model_id)
+        hw = load_hardware_config(req.hardware_config)
         
         # Validate
-        validation = config_service.validate_model()
+        validation = config_service.validate_model(model_ir)
         
         return {
             "model": {
@@ -131,18 +126,6 @@ def load_model_and_hardware(req: LoadModelRequest):
                 "issues": validation.issues,
             }
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/config/layer-types")
-def get_layer_types():
-    """
-    Step 2: Get available layer types for parallelism configuration.
-    """
-    try:
-        layer_types = config_service.get_layer_types()
-        return {"layer_types": layer_types}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -240,39 +223,6 @@ def get_layers_info_stateless(model_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-class LayerParallelismRequest(BaseModel):
-    layer_type: str
-    tensor_parallel: int = 1
-    context_parallel: int = 1
-    sequence_parallel: int = 1
-
-
-@app.post("/config/layer-parallelism")
-def configure_layer_parallelism(req: LayerParallelismRequest):
-    """
-    Step 3: Configure parallelism for a specific layer type.
-    """
-    try:
-        config_service.configure_layer_parallelism(
-            layer_type=req.layer_type,
-            tensor_parallel=req.tensor_parallel,
-            context_parallel=req.context_parallel,
-            sequence_parallel=req.sequence_parallel
-        )
-        
-        config = config_service.get_layer_config(req.layer_type)
-        
-        return {
-            "layer_type": req.layer_type,
-            "config": {
-                "parallelism": config.parallelism,
-                "num_instances": config.num_instances,
-            }
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 class LayerMetricsRequest(BaseModel):
     """Stateless request for layer metrics - includes all necessary context."""
     model_id: str
@@ -315,7 +265,7 @@ def compute_layer_metrics(req: LayerMetricsRequest):
         }
         
         # Instantiate the layer
-        layer = ConfigurationService._instantiate_layer_static(
+        layer = config_service.instantiate_layer(
             sample_layer_spec, parallelism, model_ir, hardware
         )
         if not layer:
@@ -381,39 +331,6 @@ def compute_layer_metrics(req: LayerMetricsRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-class SystemRequirementsRequest(BaseModel):
-    batch_size: int = 1
-    seq_length: int = 2048
-
-
-@app.post("/config/system-requirements")
-def calculate_system_requirements(req: SystemRequirementsRequest):
-    """
-    Step 4: Calculate minimum system requirements.
-    """
-    try:
-        from .layers import Phase, DataType
-        
-        requirements = config_service.calculate_minimum_system(
-            batch_size=req.batch_size,
-            seq_length=req.seq_length,
-            phase=Phase.PREFILL,
-            dtype=DataType.BF16
-        )
-        
-        return {
-            "min_chips": requirements.min_chips,
-            "total_weight_memory_gb": requirements.total_weight_memory_gb,
-            "total_activation_memory_gb": requirements.total_activation_memory_gb,
-            "total_kv_cache_gb": requirements.total_kv_cache_gb,
-            "memory_per_chip_gb": requirements.memory_per_chip_gb,
-            "fits_on_hardware": requirements.fits_on_hardware,
-            "hw_capacity_gb": requirements.hw_capacity_gb,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 class SystemMetricsRequest(BaseModel):
     """Stateless request for system metrics - includes all necessary context."""
     model_id: str
@@ -464,8 +381,8 @@ def compute_system_metrics(req: SystemMetricsRequest):
                 dtype=config.get("dtype", "bf16")
             )
         
-        # Compute metrics using static method
-        metrics = ConfigurationService.compute_system_metrics_static(
+        # Compute metrics using stateless function
+        metrics = config_service.compute_system_metrics(
             model_ir=model_ir,
             hardware=hardware,
             layer_configs=layer_configs,
@@ -506,50 +423,66 @@ def estimate_deployment(config: DeploymentConfig):
     Comprehensive API: Given a complete deployment configuration,
     return all performance metrics.
     
-    This is the main API endpoint for querying deployment performance.
-    It handles the full flow: load model + hardware → configure parallelism → compute metrics.
+    Stateless endpoint - all context provided in request.
     """
     try:
-        # Create a fresh service instance for this request
-        service = ConfigurationService()
+        from .layers import Phase, DataType
         
-        # Step 1: Load model and hardware
-        service.load_hardware(config.hardware_config)
-        service.load_model(config.model_id)
+        # Load model and hardware
+        model_ir = load_model_config(config.model_id)
+        hardware = load_hardware_config(config.hardware_config)
         
-        # Step 2: Validate
-        validation = service.validate_model()
+        # Validate
+        validation = config_service.validate_model(model_ir)
         if not validation.valid:
             raise HTTPException(
                 status_code=400,
                 detail=f"Model validation failed: {validation.issues}"
             )
         
-        # Step 3: Configure parallelism for each layer type
-        if config.layer_parallelism:
-            for layer_type, parallelism in config.layer_parallelism.items():
-                service.configure_layer_parallelism(
-                    layer_type=layer_type,
-                    tensor_parallel=parallelism.get("tensor_parallel", 1),
-                    context_parallel=parallelism.get("context_parallel", 1),
-                    sequence_parallel=parallelism.get("sequence_parallel", 1)
-                )
-        else:
-            # Default: no parallelism
-            for layer_type in service.get_layer_types():
-                service.configure_layer_parallelism(layer_type=layer_type)
+        # Build layer configs from request
+        layer_configs = {}
+        layer_types = config_service.get_layer_types(model_ir)
         
-        # Step 4: Calculate system requirements
-        from .layers import Phase, DataType
-        requirements = service.calculate_minimum_system(
+        for layer_type in layer_types:
+            # Count instances of this layer type
+            num_instances = sum(
+                1 for layer in model_ir.layers 
+                if layer.module_type == layer_type
+            )
+            
+            # Get parallelism from request or use defaults
+            parallelism = config.layer_parallelism.get(layer_type, {})
+            
+            from .config_service import LayerConfig
+            layer_configs[layer_type] = LayerConfig(
+                layer_type=layer_type,
+                layer_name=layer_type,
+                parallelism={
+                    "tensor_parallel": parallelism.get("tensor_parallel", 1),
+                    "context_parallel": parallelism.get("context_parallel", 1),
+                    "sequence_parallel": parallelism.get("sequence_parallel", 1),
+                },
+                num_instances=num_instances,
+                dtype="bf16"
+            )
+        
+        # Calculate system requirements
+        requirements = config_service.calculate_minimum_system(
+            model_ir=model_ir,
+            hardware=hardware,
+            layer_configs=layer_configs,
             batch_size=config.batch_size,
             seq_length=config.input_seq,
             phase=Phase.PREFILL,
             dtype=DataType.BF16
         )
         
-        # Step 5: Compute full metrics
-        metrics = service.compute_system_metrics(
+        # Compute full metrics
+        metrics = config_service.compute_system_metrics(
+            model_ir=model_ir,
+            hardware=hardware,
+            layer_configs=layer_configs,
             batch_size=config.batch_size,
             input_seq=config.input_seq,
             output_seq=config.output_seq,
