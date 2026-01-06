@@ -52,31 +52,109 @@ def format_params(params: int) -> str:
 
 
 def serialize_model_ir(model_ir: ModelIR, hf_model_id: str, model_id: str) -> dict:
-    """Convert ModelIR to JSON-serializable dict."""
+    """Convert ModelIR to JSON-serializable dict with unique layer_types."""
     
-    # Serialize layers
-    layers_data = []
+    # Group layers by type and specs to find unique configurations
+    layer_type_groups = {}
+    
     for layer in model_ir.layers:
-        layer_dict = {
-            "name": layer.name,
-            "layer_idx": layer.layer_idx,
-            "module_type": layer.module_type,
+        # Create a unique key based on module_type and all relevant specs
+        specs_key = (
+            layer.module_type,
+            layer.input_dim,
+            layer.output_dim,
+            layer.parameter_count,
+            layer.num_heads,
+            layer.head_dim,
+            layer.kv_heads,
+            layer.hidden_dim
+        )
+        
+        if specs_key not in layer_type_groups:
+            layer_type_groups[specs_key] = {
+                "layer": layer,
+                "count": 0
+            }
+        layer_type_groups[specs_key]["count"] += 1
+    
+    # Map module_type to class name
+    class_mapping = {
+        "attention": "MultiHeadAttention",  # Will be overridden for GQA
+        "feedforward": "TwoProjectionMLP",  # Will be overridden for gated
+        "norm": "NormLayer",
+        "embedding": "EmbeddingLayer"
+    }
+    
+    # Build layer_types array
+    layer_types = []
+    for specs_key, group_data in layer_type_groups.items():
+        layer = group_data["layer"]
+        count = group_data["count"]
+        
+        # Determine class name based on layer specifics
+        class_name = class_mapping.get(layer.module_type, "Layer")
+        
+        # Build specs dict with all parameters needed for class instantiation
+        specs = {
+            "layer_idx": 0,  # Will be set dynamically when instantiating
             "input_dim": layer.input_dim,
             "output_dim": layer.output_dim,
             "parameter_count": layer.parameter_count,
         }
         
-        # Add optional fields if present
-        if layer.num_heads is not None:
-            layer_dict["num_heads"] = layer.num_heads
-        if layer.head_dim is not None:
-            layer_dict["head_dim"] = layer.head_dim
-        if layer.kv_heads is not None:
-            layer_dict["kv_heads"] = layer.kv_heads
-        if layer.hidden_dim is not None:
-            layer_dict["hidden_dim"] = layer.hidden_dim
+        if layer.module_type == "attention":
+            if layer.kv_heads is not None and layer.kv_heads < layer.num_heads:
+                class_name = "GroupedQueryAttention"
+                specs.update({
+                    "hidden_size": layer.input_dim,
+                    "num_heads": layer.num_heads,
+                    "num_kv_heads": layer.kv_heads,
+                    "head_dim": layer.head_dim,
+                })
+            else:
+                class_name = "MultiHeadAttention"
+                specs.update({
+                    "hidden_size": layer.input_dim,
+                    "num_heads": layer.num_heads,
+                    "head_dim": layer.head_dim,
+                })
         
-        layers_data.append(layer_dict)
+        elif layer.module_type == "feedforward":
+            # Check if it's gated (3 projections) or standard (2 projections)
+            # Heuristic: if param_count suggests 3 projections, it's gated
+            expected_2proj = 2 * layer.input_dim * layer.hidden_dim
+            expected_3proj = 3 * layer.input_dim * layer.hidden_dim
+            
+            if abs(layer.parameter_count - expected_3proj) < abs(layer.parameter_count - expected_2proj):
+                class_name = "SwiGLUFeedForward"
+            else:
+                class_name = "TwoProjectionMLP"
+            
+            specs.update({
+                "hidden_size": layer.input_dim,
+                "intermediate_size": layer.hidden_dim,
+            })
+        
+        elif layer.module_type == "norm":
+            class_name = "NormLayer"
+            specs.update({
+                "hidden_size": layer.input_dim,
+                "has_bias": False,  # RMSNorm default
+            })
+        
+        elif layer.module_type == "embedding":
+            class_name = "EmbeddingLayer"
+            specs.update({
+                "vocab_size": model_ir.vocab_size,
+                "hidden_size": layer.output_dim,
+            })
+        
+        layer_types.append({
+            "name": layer.module_type,
+            "class": class_name,
+            "count": count,
+            "specs": specs
+        })
     
     # Calculate total params
     total_params = calculate_total_params(model_ir)
@@ -91,7 +169,7 @@ def serialize_model_ir(model_ir: ModelIR, hf_model_id: str, model_id: str) -> di
         "vocab_size": model_ir.vocab_size,
         "total_params": total_params,
         "total_params_formatted": format_params(total_params),
-        "layers": layers_data,
+        "layer_types": layer_types,
         "validated": False,
         "validation_notes": "Generated automatically - requires manual validation"
     }

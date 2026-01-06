@@ -32,14 +32,12 @@ class EmbeddingLayer(Layer):
     
     def __init__(
         self,
-        name: str,
         vocab_size: int,
         hidden_size: int,
         parallelism: Optional[dict] = None
     ):
         """
         Args:
-            name: Layer name
             vocab_size: Vocabulary size
             hidden_size: Model hidden dimension
             parallelism: Parallelism config (see Layer base class)
@@ -51,7 +49,7 @@ class EmbeddingLayer(Layer):
         self.param_count = vocab_size * hidden_size
         
         # Embeddings are typically layer_idx=-1 (before transformer layers)
-        super().__init__(name, layer_idx=-1, parallelism=parallelism)
+        super().__init__(layer_idx=-1, parallelism=parallelism)
     
     def _get_num_chips(self) -> int:
         """Number of chips for embedding layer"""

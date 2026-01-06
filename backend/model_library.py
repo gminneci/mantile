@@ -66,28 +66,50 @@ def load_model_config(model_id: str) -> ModelIR:
     with open(config_path, 'r') as f:
         data = json.load(f)
     
-    # Validate required fields
-    required_fields = ["model_id", "name", "hidden_size", "num_layers", "vocab_size", "layers"]
-    missing = [f for f in required_fields if f not in data]
-    if missing:
-        raise ValueError(f"Model config missing required fields: {missing}")
-    
-    # Reconstruct layers
-    layers = []
-    for layer_data in data["layers"]:
-        layer_spec = LayerSpecs(
-            name=layer_data["name"],
-            layer_idx=layer_data["layer_idx"],
-            module_type=layer_data["module_type"],
-            input_dim=layer_data["input_dim"],
-            output_dim=layer_data["output_dim"],
-            parameter_count=layer_data["parameter_count"],
-            num_heads=layer_data.get("num_heads"),
-            head_dim=layer_data.get("head_dim"),
-            kv_heads=layer_data.get("kv_heads"),
-            hidden_dim=layer_data.get("hidden_dim")
-        )
-        layers.append(layer_spec)
+    # Check if this is new format (layer_types) or old format (layers)
+    if "layer_types" in data:
+        # New format: expand layer_types into full layers list
+        layers = []
+        layer_idx = 0
+        
+        for layer_type_data in data["layer_types"]:
+            module_type = layer_type_data["name"]
+            count = layer_type_data["count"]
+            specs = layer_type_data["specs"]
+            
+            # Create count instances of this layer type
+            for i in range(count):
+                layer_spec = LayerSpecs(
+                    name=f"layer_{layer_idx}_{module_type}",
+                    layer_idx=layer_idx,
+                    module_type=module_type,
+                    input_dim=specs["input_dim"],
+                    output_dim=specs["output_dim"],
+                    parameter_count=specs["parameter_count"],
+                    num_heads=specs.get("num_heads"),
+                    head_dim=specs.get("head_dim"),
+                    kv_heads=specs.get("num_kv_heads"),
+                    hidden_dim=specs.get("intermediate_size")
+                )
+                layers.append(layer_spec)
+                layer_idx += 1
+    else:
+        # Old format: direct layers array (backward compatibility)
+        layers = []
+        for layer_data in data.get("layers", []):
+            layer_spec = LayerSpecs(
+                name=layer_data["name"],
+                layer_idx=layer_data["layer_idx"],
+                module_type=layer_data["module_type"],
+                input_dim=layer_data["input_dim"],
+                output_dim=layer_data["output_dim"],
+                parameter_count=layer_data["parameter_count"],
+                num_heads=layer_data.get("num_heads"),
+                head_dim=layer_data.get("head_dim"),
+                kv_heads=layer_data.get("kv_heads"),
+                hidden_dim=layer_data.get("hidden_dim")
+            )
+            layers.append(layer_spec)
     
     # Construct ModelIR
     model_ir = ModelIR(

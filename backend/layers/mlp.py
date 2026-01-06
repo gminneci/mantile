@@ -37,7 +37,6 @@ class MLPLayer(Layer):
     
     def __init__(
         self,
-        name: str,
         layer_idx: int,
         hidden_size: int,
         intermediate_size: int,
@@ -46,7 +45,6 @@ class MLPLayer(Layer):
     ):
         """
         Args:
-            name: Layer name
             layer_idx: Layer index
             hidden_size: Model hidden dimension
             intermediate_size: MLP intermediate dimension (typically 4 * hidden_size)
@@ -66,7 +64,7 @@ class MLPLayer(Layer):
         # 3: gate (H->I) + up (H->I) + down (I->H) => 3 * H * I
         self.param_count = hidden_size * intermediate_size * (2 if self.num_projections == 2 else 3)
         
-        super().__init__(name, layer_idx, parallelism)
+        super().__init__(layer_idx, parallelism)
     
     def _get_num_chips(self) -> int:
         """Number of chips used for this layer's shard. TP modeled; PP TODO."""
@@ -199,14 +197,12 @@ class GatedMLPLayer(MLPLayer):
     
     def __init__(
         self,
-        name: str,
         layer_idx: int,
         hidden_size: int,
         intermediate_size: int,
         parallelism: Optional[dict] = None
     ):
         super().__init__(
-            name=name,
             layer_idx=layer_idx,
             hidden_size=hidden_size,
             intermediate_size=intermediate_size,

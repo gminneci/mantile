@@ -38,7 +38,6 @@ class AttentionLayer(Layer):
     
     def __init__(
         self,
-        name: str,
         layer_idx: int,
         hidden_size: int,
         num_heads: int,
@@ -47,7 +46,6 @@ class AttentionLayer(Layer):
     ):
         """
         Args:
-            name: Layer name
             layer_idx: Layer index
             hidden_size: Model hidden dimension
             num_heads: Number of attention heads
@@ -59,7 +57,7 @@ class AttentionLayer(Layer):
         self.head_dim = head_dim
         # Q, K, V, O projections (all same size for vanilla MHA)
         self.param_count = 4 * hidden_size * hidden_size
-        super().__init__(name, layer_idx, parallelism)
+        super().__init__(layer_idx, parallelism)
     
     def _validate_parallelism(self) -> None:
         """MHA supports head-parallel TP with divisibility constraint"""
@@ -307,7 +305,6 @@ class GroupedQueryAttentionLayer(Layer):
     
     def __init__(
         self,
-        name: str,
         layer_idx: int,
         hidden_size: int,
         num_heads: int,
@@ -317,7 +314,6 @@ class GroupedQueryAttentionLayer(Layer):
     ):
         """
         Args:
-            name: Layer name
             layer_idx: Layer index
             hidden_size: Model hidden dimension
             num_heads: Number of query heads
@@ -337,7 +333,7 @@ class GroupedQueryAttentionLayer(Layer):
         o_params = hidden_size * hidden_size
         self.param_count = q_params + k_params + v_params + o_params
         
-        super().__init__(name, layer_idx, parallelism)
+        super().__init__(layer_idx, parallelism)
     
     def _validate_parallelism(self) -> None:
         """GQA supports head-parallel TP with divisibility constraints"""

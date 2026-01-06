@@ -35,7 +35,6 @@ class NormLayer(Layer):
     
     def __init__(
         self,
-        name: str,
         layer_idx: int,
         hidden_size: int,
         has_bias: bool = False,
@@ -43,7 +42,6 @@ class NormLayer(Layer):
     ):
         """
         Args:
-            name: Layer name
             layer_idx: Layer index
             hidden_size: Model hidden dimension
             has_bias: Whether LayerNorm has bias term (False for RMSNorm)
@@ -52,7 +50,7 @@ class NormLayer(Layer):
         self.hidden_size = hidden_size
         self.has_bias = has_bias
         self.param_count = hidden_size * (2 if has_bias else 1)
-        super().__init__(name, layer_idx, parallelism)
+        super().__init__(layer_idx, parallelism)
     
     def _get_num_chips(self) -> int:
         return 1

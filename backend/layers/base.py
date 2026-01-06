@@ -125,10 +125,9 @@ class Layer(ABC):
     # Subclasses override this to declare supported parallelism types
     SUPPORTED_PARALLELISM: set[str] = set()
     
-    def __init__(self, name: str, layer_idx: int, parallelism: Optional[dict] = None):
+    def __init__(self, layer_idx: int, parallelism: Optional[dict] = None):
         """
         Args:
-            name: Human-readable layer name (e.g., "layer_0_attn")
             layer_idx: Layer index in the model (0-indexed)
             parallelism: Parallelism configuration dict, e.g.:
                 {"tensor_parallel": 2} - 2-way TP
@@ -136,7 +135,6 @@ class Layer(ABC):
                 {"expert_parallel": 4, "tensor_parallel": 2} - Mixed EP+TP
                 None - Single chip, no sharding
         """
-        self.name = name
         self.layer_idx = layer_idx
         self.parallelism = parallelism or {}
         

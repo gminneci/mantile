@@ -208,7 +208,6 @@ class ConfigurationService:
             if layer_spec.kv_heads and layer_spec.kv_heads < layer_spec.num_heads:
                 # GQA
                 return GroupedQueryAttentionLayer(
-                    name=layer_spec.name,
                     layer_idx=layer_spec.layer_idx,
                     hidden_size=layer_spec.input_dim,
                     num_heads=layer_spec.num_heads,
@@ -219,7 +218,6 @@ class ConfigurationService:
             else:
                 # MHA
                 return AttentionLayer(
-                    name=layer_spec.name,
                     layer_idx=layer_spec.layer_idx,
                     hidden_size=layer_spec.input_dim,
                     num_heads=layer_spec.num_heads,
@@ -237,7 +235,6 @@ class ConfigurationService:
             if layer_spec.hidden_dim and layer_spec.hidden_dim > layer_spec.input_dim * 2:
                 # Gated MLP
                 return GatedMLPLayer(
-                    name=layer_spec.name,
                     layer_idx=layer_spec.layer_idx,
                     hidden_size=layer_spec.input_dim,
                     intermediate_size=layer_spec.hidden_dim,
@@ -246,7 +243,6 @@ class ConfigurationService:
             else:
                 # Regular MLP
                 return MLPLayer(
-                    name=layer_spec.name,
                     layer_idx=layer_spec.layer_idx,
                     hidden_size=layer_spec.input_dim,
                     intermediate_size=layer_spec.hidden_dim or layer_spec.input_dim * 4,
@@ -256,7 +252,6 @@ class ConfigurationService:
         elif layer_spec.module_type == "norm":
             # Norm doesn't use parallelism (replicated)
             return NormLayer(
-                name=layer_spec.name,
                 layer_idx=layer_spec.layer_idx,
                 hidden_size=layer_spec.input_dim,
                 has_bias=False,
@@ -266,7 +261,6 @@ class ConfigurationService:
         elif layer_spec.module_type == "embedding":
             # Embedding doesn't use parallelism (replicated)
             return EmbeddingLayer(
-                name=layer_spec.name,
                 vocab_size=model_ir.vocab_size,
                 hidden_size=model_ir.hidden_size,
                 parallelism={}
@@ -297,7 +291,6 @@ class ConfigurationService:
             if layer_spec.kv_heads and layer_spec.kv_heads < layer_spec.num_heads:
                 # GQA
                 return GroupedQueryAttentionLayer(
-                    name=layer_spec.name,
                     layer_idx=layer_spec.layer_idx,
                     hidden_size=layer_spec.input_dim,
                     num_heads=layer_spec.num_heads,
@@ -308,7 +301,6 @@ class ConfigurationService:
             else:
                 # MHA
                 return AttentionLayer(
-                    name=layer_spec.name,
                     layer_idx=layer_spec.layer_idx,
                     hidden_size=layer_spec.input_dim,
                     num_heads=layer_spec.num_heads,
@@ -326,7 +318,6 @@ class ConfigurationService:
             if layer_spec.hidden_dim and layer_spec.hidden_dim > layer_spec.input_dim * 2:
                 # Gated MLP
                 return GatedMLPLayer(
-                    name=layer_spec.name,
                     layer_idx=layer_spec.layer_idx,
                     hidden_size=layer_spec.input_dim,
                     intermediate_size=layer_spec.hidden_dim,
@@ -335,7 +326,6 @@ class ConfigurationService:
             else:
                 # Regular MLP
                 return MLPLayer(
-                    name=layer_spec.name,
                     layer_idx=layer_spec.layer_idx,
                     hidden_size=layer_spec.input_dim,
                     intermediate_size=layer_spec.hidden_dim or layer_spec.input_dim * 4,
@@ -345,7 +335,6 @@ class ConfigurationService:
         elif layer_spec.module_type == "norm":
             # Norm doesn't use parallelism (replicated)
             return NormLayer(
-                name=layer_spec.name,
                 layer_idx=layer_spec.layer_idx,
                 hidden_size=layer_spec.input_dim,
                 has_bias=False,
@@ -355,7 +344,6 @@ class ConfigurationService:
         elif layer_spec.module_type == "embedding":
             # Embedding doesn't use parallelism (replicated)
             return EmbeddingLayer(
-                name=layer_spec.name,
                 vocab_size=self.model_ir.vocab_size,
                 hidden_size=self.model_ir.hidden_size,
                 parallelism={}
