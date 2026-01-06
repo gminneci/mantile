@@ -130,53 +130,6 @@ def load_model_and_hardware(req: LoadModelRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/config/layers")
-def get_layers_info():
-    """
-    DEPRECATED: Use /api/layers with model_id parameter instead.
-    Get detailed information about all layers in the model.
-    Returns layer types, counts, and available parallelism strategies.
-    """
-    try:
-        if not config_service.model_ir:
-            raise HTTPException(status_code=400, detail="Model not loaded")
-        
-        # Group layers by type
-        layer_info = {}
-        for layer in config_service.model_ir.layers:
-            layer_type = layer.module_type
-            if layer_type not in layer_info:
-                layer_info[layer_type] = {
-                    "type": layer_type,
-                    "count": 0,
-                    "sample_layer": {
-                        "name": layer.name,
-                        "input_dim": layer.input_dim,
-                        "output_dim": layer.output_dim,
-                    },
-                    "available_parallelism": []
-                }
-            layer_info[layer_type]["count"] += 1
-        
-        # Add available parallelism strategies per layer type
-        for layer_type in layer_info:
-            if layer_type == "attention":
-                layer_info[layer_type]["available_parallelism"] = ["tensor_parallel", "context_parallel"]
-            elif layer_type == "feedforward":
-                layer_info[layer_type]["available_parallelism"] = ["tensor_parallel", "sequence_parallel"]
-            elif layer_type == "norm":
-                layer_info[layer_type]["available_parallelism"] = []  # replicated
-            elif layer_type == "embedding":
-                layer_info[layer_type]["available_parallelism"] = []  # replicated
-            
-            # All layers support dtype selection
-            layer_info[layer_type]["available_dtypes"] = ["fp32", "fp16", "bf16", "fp8", "int8"]
-        
-        return {"layers": list(layer_info.values())}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.get("/api/layers")
 def get_layers_info_stateless(model_id: str):
     """
