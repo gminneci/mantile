@@ -116,8 +116,9 @@ Estimate *achievable* performance (latency, throughput, memory, cost, efficiency
 **Interactive UX Flow:**
 
 1. **Model + Hardware Selection**
-   - User selects model (e.g., Llama 3.3 70B) and hardware system (e.g., NVL-72)
-   - System loads model config from HF, instantiates all layers
+  - Frontend selects a `model_id` (e.g., llama_3.3_70b) and `hardware_config` (e.g., nvidia_nvl72_rack)
+  - Discover valid IDs via `GET /models` and `GET /hardware`
+  - Stateless: all context is provided on each request; no server-side session
 
 2. **Validation & Parameter Check**
    - Auto-populate all layers from config (attention, MLP, norm, embedding)
@@ -168,14 +169,15 @@ Estimate *achievable* performance (latency, throughput, memory, cost, efficiency
   - LLM analyzes config, suggests fixes (reduce batch, increase TP, enable CP)
 
 **Implementation Status:**
-
-- `estimator.py` has basic version using old ModelIR
-- **Needs**: Integration with new layer implementations
-  - Replace approximations with layer-level metric aggregation
-  - Iterate through model layers, sum their compute_metrics() results
-  - Separate prefill and decode phases
-  - Add latency calculation (FLOPs / peak_flops, memory / bandwidth)
-  - Add bottleneck analysis (compute vs memory vs communication bound)
+ 
+ - Backend provides stateless endpoints:
+   - `GET /hardware`, `GET /hardware/{config_name}`
+   - `GET /models`, `GET /models/{model_id}`
+   - `GET /api/layers?model_id=...` (layer categories + counts)
+  - Removed: `POST /config/load` (use stateless endpoints instead)
+   - `POST /config/layer-metrics` (per-layer metrics for a representative layer)
+   - `POST /config/system-metrics` (aggregate system metrics)
+ - Legacy `estimator.py` and `/estimate` endpoint removed; replaced by the stateless API above.
 
 ### Llama 3.3 70B Support ✅
 
@@ -200,8 +202,7 @@ Total (80 layers): 70.6B params, 186.84 GB total memory
 ```
 
 **Next steps:**
-- Update estimator.py to use layer implementations (compose metrics)
-- Add latency modeling (compute, memory, communication bottlenecks)
+- Expand communication modeling and bottleneck attribution
 - Calibration against public benchmarks (inferencemax.semianalysis.com)
 - RoPE modeling (document as minimal overhead)
 

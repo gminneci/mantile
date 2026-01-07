@@ -29,7 +29,7 @@ function StatCard({ label, value, unit, icon: Icon, delay }) {
   );
 }
 
-function LayerConfigCard({ layer, config, onConfigChange, batchSize, seqLength, modelId, hwPreset }) {
+function LayerConfigCard({ layer, config, onConfigChange, batchSize, seqLength, modelId, hwPreset, availableDtypes }) {
   const [metrics, setMetrics] = useState(null);
   const [loadingMetrics, setLoadingMetrics] = useState(false);
 
@@ -129,7 +129,7 @@ function LayerConfigCard({ layer, config, onConfigChange, batchSize, seqLength, 
           value={config?.dtype || 'bf16'}
           onChange={(e) => onConfigChange(layer.type, 'dtype', e.target.value)}
         >
-          {(layer.available_dtypes || ['fp32', 'fp16', 'bf16', 'fp8', 'int8']).map(dtype => (
+          {(availableDtypes || ['bf16', 'fp16', 'fp8', 'int8']).map(dtype => (
             <option key={dtype} value={dtype}>{dtype.toUpperCase()}</option>
           ))}
         </select>
@@ -162,7 +162,7 @@ function LayerConfigCard({ layer, config, onConfigChange, batchSize, seqLength, 
   );
 }
 
-function ConfigPanel({ title, modelId, hwPreset, layers, layerConfigs, onModelChange, onHwChange, onLayerConfigChange, batchSize, seqLength, onBatchChange, onSeqChange }) {
+function ConfigPanel({ title, modelId, hwPreset, layers, layerConfigs, onModelChange, onHwChange, onLayerConfigChange, batchSize, seqLength, onBatchChange, onSeqChange, availableDtypes }) {
   return (
     <aside style={{
       width: '340px',
@@ -256,6 +256,7 @@ function ConfigPanel({ title, modelId, hwPreset, layers, layerConfigs, onModelCh
                 seqLength={seqLength}
                 modelId={modelId}
                 hwPreset={hwPreset}
+                availableDtypes={availableDtypes}
               />
             ))}
           </div>
@@ -274,6 +275,8 @@ export default function App() {
   // Config State
   const [modelId, setModelId] = useState('TinyLlama/TinyLlama-1.1B-Chat-v1.0');
   const [hwPreset, setHwPreset] = useState('nvidia_gb200_single');
+  const [availableDtypes, setAvailableDtypes] = useState(['bf16', 'fp16', 'fp8', 'int8']);
+  const [availableDtypes2, setAvailableDtypes2] = useState(['bf16', 'fp16', 'fp8', 'int8']);
   const [batchSize, setBatchSize] = useState(1);
   const [seqLength, setSeqLength] = useState(2048);
   
@@ -293,6 +296,16 @@ export default function App() {
     layers: [],
     systemMetrics: null
   });
+  
+  // Helper: derive dtype list from hardware capabilities
+  const deriveDtypes = (hw) => {
+    const dtypes = [];
+    if (hw?.bf16_tflops) dtypes.push('bf16');
+    if (hw?.fp16_tflops) dtypes.push('fp16');
+    if (hw?.fp8_tflops) dtypes.push('fp8');
+    if (hw?.int8_tops) dtypes.push('int8');
+    return dtypes.length ? dtypes : ['bf16', 'fp16', 'fp8', 'int8'];
+  };
 
   // Initialize config2 layers when comparison mode is enabled
   useEffect(() => {
@@ -379,6 +392,31 @@ export default function App() {
       setLoading(false);
     }
   };
+  // Update available dtypes when hardware preset changes
+  useEffect(() => {
+    const loadHardwareDtypes = async () => {
+      try {
+        const res = await axios.get(`${API_URL}/hardware/${hwPreset}`);
+        setAvailableDtypes(deriveDtypes(res.data));
+      } catch (e) {
+        setAvailableDtypes(['bf16', 'fp16', 'fp8', 'int8']);
+      }
+    };
+    loadHardwareDtypes();
+  }, [hwPreset]);
+
+  // Update available dtypes for comparison panel when its hardware changes
+  useEffect(() => {
+    const loadHardwareDtypes2 = async () => {
+      try {
+        const res = await axios.get(`${API_URL}/hardware/${config2.hwPreset}`);
+        setAvailableDtypes2(deriveDtypes(res.data));
+      } catch (e) {
+        setAvailableDtypes2(['bf16', 'fp16', 'fp8', 'int8']);
+      }
+    };
+    if (comparisonMode) loadHardwareDtypes2();
+  }, [comparisonMode, config2.hwPreset]);
 
   // Load on mount and when model changes
   useEffect(() => {
@@ -478,6 +516,7 @@ export default function App() {
         seqLength={seqLength}
         onBatchChange={setBatchSize}
         onSeqChange={setSeqLength}
+        availableDtypes={availableDtypes}
       />
 
       {/* Center Panel - Metrics */}
@@ -690,6 +729,7 @@ export default function App() {
                     seqLength={seqLength}
                     modelId={config2.modelId}
                     hwPreset={config2.hwPreset}
+                    availableDtypes={availableDtypes2}
                   />
                 ))}
               </div>

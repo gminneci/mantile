@@ -260,10 +260,7 @@ export default function App() {
       setLoading(false);
     }
   };
-
-  // Load on mount and when model/hardware changes
-  useEffect(() => {
-    loadModelAndHardware();
+        // Removed: legacy /config/load call
   }, [modelId, hwPreset]);
 
   // Handle layer config change

@@ -124,6 +124,14 @@ class Layer(ABC):
     
     # Subclasses override this to declare supported parallelism types
     SUPPORTED_PARALLELISM: set[str] = set()
+
+    @classmethod
+    def get_supported_parallelism(cls) -> list[str]:
+        """
+        Return the supported parallelism types for this layer class.
+        Provided as a classmethod for easy introspection without instantiation.
+        """
+        return sorted(list(cls.SUPPORTED_PARALLELISM))
     
     def __init__(self, layer_idx: int, parallelism: Optional[dict] = None):
         """
