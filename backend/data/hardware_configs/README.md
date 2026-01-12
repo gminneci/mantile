@@ -10,12 +10,16 @@ Each JSON file defines a hardware configuration with the following fields:
 {
   "name": "Hardware Name",
   "description": "Brief description of the hardware",
-  "fp16_tflops": 0.0,     // FP16 compute in TFLOPs
-  "bf16_tflops": 0.0,     // BF16 compute in TFLOPs
-  "fp8_tflops": 0.0,      // FP8 compute in TFLOPs
-  "int8_tops": 0.0,       // INT8 compute in TOPs
-  "hbm_capacity_gb": 0.0, // HBM memory capacity in GB
-  "hbm_bandwidth_gbps": 0.0, // HBM bandwidth in GB/s
+  "manufacturer": "Manufacturer Name",
+  "compute": {
+    "fp16": 0.0,  // FP16 compute in TFLOPs
+    "bf16": 0.0,  // BF16 compute in TFLOPs
+    "fp8": 0.0,   // FP8 compute in TFLOPs
+    "int8": 0.0   // INT8 compute in TOPs
+  },
+  "memory": [
+    {"type": "HBM", "capacity_gb": 0.0, "bandwidth_gbps": 0.0}
+  ],
   "interconnect_bandwidth_gbps": 0.0, // NVLink/interconnect BW in GB/s
   "interconnect_latency_us": 0.0,     // Interconnect latency in microseconds
   "chips_per_node": 1,    // Number of chips per node
@@ -31,10 +35,15 @@ Each JSON file defines a hardware configuration with the following fields:
 
 ## Usage
 
-Load hardware specs using the `hardware_library.py` module:
+Hardware configs are loaded directly as JSON dicts in main.py:
 
 ```python
-from backend.hardware_library import load_hardware_config
+import json
+from pathlib import Path
+
+config_path = Path("backend/data/hardware_configs/nvidia_gb200_single.json")
+with open(config_path) as f:
+    hardware = json.load(f)
 
 # Load specific config
 specs = load_hardware_config("nvidia_gb200_single")

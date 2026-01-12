@@ -105,9 +105,6 @@ Mantile/
 ├── backend/
 │   ├── main.py              # FastAPI server
 │   ├── models.py            # Data models
-│   ├── config_service.py    # Stateless business logic
-│   ├── hardware_library.py  # Hardware configs loader
-│   ├── model_library.py     # Model IR configs loader
 │   └── data/
 │       ├── hardware_configs/
 │       └── model_configs/

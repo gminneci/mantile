@@ -133,10 +133,11 @@ class Layer(ABC):
         """
         return sorted(list(cls.SUPPORTED_PARALLELISM))
     
-    def __init__(self, layer_idx: int, parallelism: Optional[dict] = None):
+    def __init__(self, layer_idx: int, dtype: DataType | str, parallelism: Optional[dict] = None):
         """
         Args:
             layer_idx: Layer index in the model (0-indexed)
+            dtype: Numerical precision (DataType enum or string like 'bf16')
             parallelism: Parallelism configuration dict, e.g.:
                 {"tensor_parallel": 2} - 2-way TP
                 {"pipeline_parallel": {"stage": 0, "num_stages": 4}} - PP stage 0/4
@@ -144,6 +145,7 @@ class Layer(ABC):
                 None - Single chip, no sharding
         """
         self.layer_idx = layer_idx
+        self.dtype = DataType(dtype) if isinstance(dtype, str) else dtype
         self.parallelism = parallelism or {}
         
         # Validate that this layer supports the requested parallelism
@@ -180,8 +182,7 @@ class Layer(ABC):
         self,
         batch_size: int,
         seq_len: int,
-        phase: Phase,
-        dtype: DataType
+        phase: Phase
     ) -> int:
         """
         Compute total FLOPs for this layer.
@@ -190,7 +191,6 @@ class Layer(ABC):
             batch_size: Number of sequences in batch
             seq_len: Sequence length (prompt length for prefill, 1 for decode)
             phase: PREFILL or DECODE
-            dtype: Numerical precision
             
         Returns:
             Total floating point operations
@@ -198,13 +198,11 @@ class Layer(ABC):
         pass
     
     @abstractmethod
-    def compute_weight_memory(self, dtype: DataType) -> int:
+    def compute_weight_memory(self) -> int:
         """
         Compute memory required to store layer parameters.
+        Uses self.dtype for precision.
         
-        Args:
-            dtype: Numerical precision for weights
-            
         Returns:
             Memory in bytes
         """
@@ -215,17 +213,16 @@ class Layer(ABC):
         self,
         batch_size: int,
         seq_len: int,
-        phase: Phase,
-        dtype: DataType
+        phase: Phase
     ) -> int:
         """
         Compute memory required for activations during forward pass.
+        Uses self.dtype for precision.
         
         Args:
             batch_size: Number of sequences in batch
             seq_len: Sequence length
             phase: PREFILL or DECODE
-            dtype: Numerical precision for activations
             
         Returns:
             Memory in bytes
@@ -235,16 +232,15 @@ class Layer(ABC):
     def compute_kv_cache(
         self,
         batch_size: int,
-        seq_len: int,
-        dtype: DataType
+        seq_len: int
     ) -> int:
         """
         Compute KV cache size (relevant for attention layers only).
+        Uses self.dtype for precision.
         
         Args:
             batch_size: Number of sequences in batch
             seq_len: Total sequence length to cache
-            dtype: Numerical precision for cache
             
         Returns:
             Memory in bytes (0 for non-attention layers)
@@ -256,17 +252,16 @@ class Layer(ABC):
         batch_size: int,
         seq_len: int,
         phase: Phase | str,
-        dtype: DataType | str,
         hardware: Optional[dict] = None
     ) -> LayerMetrics:
         """
         Compute all metrics for this layer (both per-chip and aggregate).
+        Uses self.dtype for numerical precision.
         
         Args:
             batch_size: Number of sequences in batch
             seq_len: Sequence length
             phase: PREFILL or DECODE (or string)
-            dtype: Numerical precision (or string)
             hardware: Optional hardware config dict with:
                 - compute_tflops: Peak compute throughput per chip (TFLOPS)
                 - memory_bandwidth_gb_s: Memory bandwidth per chip (GB/s)
@@ -279,21 +274,19 @@ class Layer(ABC):
         # Convert string inputs to enums
         if isinstance(phase, str):
             phase = Phase(phase)
-        if isinstance(dtype, str):
-            dtype = DataType(dtype)
         
         # Get number of chips for this layer
         num_chips = self._get_num_chips()
         
         # Compute per-chip metrics (what ONE chip does)
-        flops_per_chip = self.compute_flops(batch_size, seq_len, phase, dtype)
-        weight_mem_per_chip = self.compute_weight_memory(dtype)
-        activation_mem_per_chip = self.compute_activation_memory(batch_size, seq_len, phase, dtype)
-        kv_cache_per_chip = self.compute_kv_cache(batch_size, seq_len, dtype)
+        flops_per_chip = self.compute_flops(batch_size, seq_len, phase)
+        weight_mem_per_chip = self.compute_weight_memory()
+        activation_mem_per_chip = self.compute_activation_memory(batch_size, seq_len, phase)
+        kv_cache_per_chip = self.compute_kv_cache(batch_size, seq_len)
         
         # Communication bytes (if applicable based on parallelism strategy)
         # This is computed regardless of hardware config, as it's a property of the layer
-        comm_bytes = self._compute_communication_bytes(batch_size, seq_len, phase, dtype, hardware or {})
+        comm_bytes = self._compute_communication_bytes(batch_size, seq_len, phase, hardware or {})
         
         # Compute aggregate metrics (total across all chips)
         # Note: FLOPs might not scale linearly with num_chips (e.g., PP doesn't replicate work)
@@ -396,18 +389,17 @@ class Layer(ABC):
         batch_size: int,
         seq_len: int,
         phase: Phase,
-        dtype: DataType,
         hardware: dict
     ) -> Optional[int]:
         """
         Compute inter-chip communication requirements.
         Default implementation returns None. Subclasses override for specific patterns.
+        Uses self.dtype for precision.
         
         Args:
             batch_size: Number of sequences
             seq_len: Sequence length
             phase: PREFILL or DECODE
-            dtype: Numerical precision
             hardware: Hardware config (includes num_chips, parallelism strategy, etc.)
             
         Returns:

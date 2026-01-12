@@ -41,6 +41,7 @@ class MLPLayer(Layer):
         hidden_size: int,
         intermediate_size: int,
         num_projections: int = 2,
+        dtype: DataType | str = "bf16",
         parallelism: Optional[dict] = None
     ):
         """
@@ -49,6 +50,7 @@ class MLPLayer(Layer):
             hidden_size: Model hidden dimension
             intermediate_size: MLP intermediate dimension (typically 4 * hidden_size)
             num_projections: 2 for standard MLP, 3 for gated/SwiGLU (default: 2)
+            dtype: Numerical precision (DataType enum or string like 'bf16')
             parallelism: Parallelism config (see Layer base class)
         """
         self.hidden_size = hidden_size
@@ -64,7 +66,7 @@ class MLPLayer(Layer):
         # 3: gate (H->I) + up (H->I) + down (I->H) => 3 * H * I
         self.param_count = hidden_size * intermediate_size * (2 if self.num_projections == 2 else 3)
         
-        super().__init__(layer_idx, parallelism)
+        super().__init__(layer_idx, dtype, parallelism)
     
     def _get_num_chips(self) -> int:
         """Number of chips used for this layer's shard. TP modeled; PP TODO."""
@@ -73,7 +75,7 @@ class MLPLayer(Layer):
         tp = self.parallelism.get("tensor_parallel", 1)
         return tp
     
-    def compute_flops(self, batch_size: int, seq_len: int, phase: Phase, dtype: DataType) -> int:
+    def compute_flops(self, batch_size: int, seq_len: int, phase: Phase) -> int:
         """
         FLOPs per chip for MLP projections (matmuls dominate).
         - Two-projection MLP: up (H→I) + down (I→H)
@@ -109,11 +111,11 @@ class MLPLayer(Layer):
         mm += 2 * B * S_per_chip * (I // tp) * H
         return int(mm)
     
-    def compute_weight_memory(self, dtype: DataType) -> int:
+    def compute_weight_memory(self) -> int:
         """Memory = param_count * bytes_per_element"""
-        return int(self.param_count * dtype.bytes_per_element)
+        return int(self.param_count * self.dtype.bytes_per_element)
     
-    def compute_activation_memory(self, batch_size: int, seq_len: int, phase: Phase, dtype: DataType) -> int:
+    def compute_activation_memory(self, batch_size: int, seq_len: int, phase: Phase) -> int:
         """
         Approximate peak activations per chip:
         - Up (and gate) outputs: B*(S/sp)*(I/tp)
@@ -142,14 +144,13 @@ class MLPLayer(Layer):
             elems += B * S_per_chip * (I // tp)  # gate output
         elems += B * S_per_chip * (I // tp)  # down input
         elems += B * S_per_chip * H  # down output (full H before reduce-scatter with SP)
-        return int(elems * dtype.bytes_per_element)
+        return int(elems * self.dtype.bytes_per_element)
 
     def _compute_communication_bytes(
         self,
         batch_size: int,
         seq_len: int,
         phase: Phase,
-        dtype: DataType,
         hardware: dict
     ) -> Optional[int]:
         """
@@ -175,14 +176,14 @@ class MLPLayer(Layer):
         
         # Tensor-parallel all-reduce (if enabled)
         if tp > 1:
-            comm_bytes += B * S * H * dtype.bytes_per_element
+            comm_bytes += B * S * H * self.dtype.bytes_per_element
         
         # Sequence-parallel communication (if enabled)
         if sp > 1:
             # All-gather input: gather sequence shards before MLP
-            comm_bytes += B * S * H * dtype.bytes_per_element
+            comm_bytes += B * S * H * self.dtype.bytes_per_element
             # Reduce-scatter output: reduce and scatter back to sequence shards
-            comm_bytes += B * S * H * dtype.bytes_per_element
+            comm_bytes += B * S * H * self.dtype.bytes_per_element
         
         return int(comm_bytes) if comm_bytes > 0 else None
 
@@ -200,6 +201,7 @@ class GatedMLPLayer(MLPLayer):
         layer_idx: int,
         hidden_size: int,
         intermediate_size: int,
+        dtype: DataType | str = "bf16",
         parallelism: Optional[dict] = None
     ):
         super().__init__(
@@ -207,5 +209,6 @@ class GatedMLPLayer(MLPLayer):
             hidden_size=hidden_size,
             intermediate_size=intermediate_size,
             num_projections=3,
+            dtype=dtype,
             parallelism=parallelism,
         )

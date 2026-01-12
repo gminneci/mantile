@@ -300,10 +300,10 @@ export default function App() {
   // Helper: derive dtype list from hardware capabilities
   const deriveDtypes = (hw) => {
     const dtypes = [];
-    if (hw?.bf16_tflops) dtypes.push('bf16');
-    if (hw?.fp16_tflops) dtypes.push('fp16');
-    if (hw?.fp8_tflops) dtypes.push('fp8');
-    if (hw?.int8_tops) dtypes.push('int8');
+    if (hw?.compute?.bf16) dtypes.push('bf16');
+    if (hw?.compute?.fp16) dtypes.push('fp16');
+    if (hw?.compute?.fp8) dtypes.push('fp8');
+    if (hw?.compute?.int8) dtypes.push('int8');
     return dtypes.length ? dtypes : ['bf16', 'fp16', 'fp8', 'int8'];
   };
 
