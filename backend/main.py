@@ -178,16 +178,14 @@ def compute_phase_metrics(phase_req: PhaseMetricsRequest, phase: Phase) -> dict:
     Args:
         phase_req: Phase-specific request with layer configurations
         phase: Phase enum (PREFILL or DECODE)
-        model_cfg: Model configuration dict
-        hardware: Hardware configuration dict
         
     Returns:
         Dict with aggregated phase metrics
     """
 
     # Load model and hardware config
-    model_cfg = load_model_config(req.model_id)
-    hardware_cfg = load_hardware_config(req.hardware_config)
+    model_cfg = load_model_config(phase_req.model_id)
+    hardware_cfg = load_hardware_config(phase_req.hardware_id)
 
     total_weight_memory_gb = 0.0
     total_activation_memory_gb = 0.0
@@ -214,7 +212,7 @@ def compute_phase_metrics(phase_req: PhaseMetricsRequest, phase: Phase) -> dict:
         num_instances = layer_type.get("count", 1)
 
         # Hardware characteristics per chip
-        hbm_memory = next((m for m in hardware_cfg['memory'] if 'HBM' in m['type']), hardware['memory'][0])
+        hbm_memory = next((m for m in hardware_cfg['memory'] if 'HBM' in m['type']), hardware_cfg['memory'][0])
         hbm_bw_per_chip = hbm_memory['bandwidth_gbps']
         assert dtype_enum.value in hardware_cfg['compute'], f"Hardware missing compute spec for dtype {dtype_enum.value}"
         peak_tflops_per_chip = hardware_cfg['compute'][dtype_enum.value]

@@ -14,6 +14,9 @@
       "count": 22,
       "specs": {
         "layer_idx": 0,
+        "input_dim": 2048,
+        "output_dim": 2048,
+        "parameter_count": 9437184,
         "hidden_size": 2048,
         "num_heads": 32,
         "num_kv_heads": 4,
@@ -26,6 +29,9 @@
       "count": 22,
       "specs": {
         "layer_idx": 0,
+        "input_dim": 2048,
+        "output_dim": 2048,
+        "parameter_count": 34603008,
         "hidden_size": 2048,
         "intermediate_size": 5632
       }
@@ -36,6 +42,9 @@
       "count": 22,
       "specs": {
         "layer_idx": 0,
+        "input_dim": 2048,
+        "output_dim": 2048,
+        "parameter_count": 2048,
         "hidden_size": 2048,
         "has_bias": false
       }
@@ -46,7 +55,8 @@
       "count": 1,
       "specs": {
         "vocab_size": 32000,
-        "hidden_size": 2048
+        "hidden_size": 2048,
+        "parameter_count": 65536000
       }
     }
   ],

@@ -27,34 +27,28 @@ Each JSON file defines a hardware configuration with the following fields:
 }
 ```
 
-## Available Configurations
-
-- **nvidia_gb200_single.json**: Single GB200 package (2 Blackwell GPUs)
-- **nvidia_nvl72_rack.json**: Full NVL-72 rack (72 GB200 packages, 144 GPUs)
-- **nvidia_h100_80gb.json**: Single H100 SXM5 80GB GPU
-
 ## Usage
 
-Hardware configs are loaded directly as JSON dicts in main.py:
+Hardware configs are loaded via the FastAPI endpoint:
 
 ```python
-import json
-from pathlib import Path
+# GET /hardware/{config_name}
+# Returns the JSON config as a dict
 
-config_path = Path("backend/data/hardware_configs/nvidia_gb200_single.json")
-with open(config_path) as f:
-    hardware = json.load(f)
+# Example: Load nvidia_gb200_single
+hardware = load_hardware_config("nvidia_gb200_single")
 
-# Load specific config
-specs = load_hardware_config("nvidia_gb200_single")
-
-# List all available configs
-configs = list_available_configs()
+# Access nested structure:
+bf16_tflops = hardware['compute']['bf16']
+hbm_memory = next((m for m in hardware['memory'] if 'HBM' in m['type']), hardware['memory'][0])
+capacity = hbm_memory['capacity_gb']
+bandwidth = hbm_memory['bandwidth_gbps']
 ```
 
 ## Adding New Configurations
 
 1. Create a new JSON file in this directory
-2. Follow the format above
-3. Use a descriptive filename (e.g., `vendor_model_variant.json`)
-4. Test loading with `load_hardware_config()`
+2. Follow the format above (see `template.json` for reference)
+3. Use a descriptive filename: `{vendor}_{model}_{variant}.json`
+4. Restart the backend to load the new config
+5. Test via `GET /hardware/{config_name}` endpoint

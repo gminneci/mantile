@@ -12,8 +12,12 @@
       "name": "attention",
       "class": "GroupedQueryAttentionLayer",
       "count": 80,
+      
       "specs": {
         "layer_idx": 0,
+        "input_dim": 8192,
+        "output_dim": 8192,
+        "parameter_count": 150994944,
         "hidden_size": 8192,
         "num_heads": 64,
         "num_kv_heads": 8,
@@ -26,6 +30,9 @@
       "count": 80,
       "specs": {
         "layer_idx": 0,
+        "input_dim": 8192,
+        "output_dim": 8192,
+        "parameter_count": 704643072,
         "hidden_size": 8192,
         "intermediate_size": 28672
       }
@@ -36,6 +43,9 @@
       "count": 80,
       "specs": {
         "layer_idx": 0,
+        "input_dim": 8192,
+        "output_dim": 8192,
+        "parameter_count": 8192,
         "hidden_size": 8192,
         "has_bias": false
       }
@@ -46,7 +56,8 @@
       "count": 1,
       "specs": {
         "vocab_size": 128256,
-        "hidden_size": 8192
+        "hidden_size": 8192,
+        "parameter_count": 1050673152
       }
     }
   ],

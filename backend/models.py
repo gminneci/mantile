@@ -1,3 +1,8 @@
+
+# ============================================================================
+# DEPRECATED: This file is deprecated and will be removed in future versions.
+# ============================================================================
+
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 

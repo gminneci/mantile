@@ -108,7 +108,3 @@ def build_model_ir(model_id: str, token: str = None) -> ModelIR:
     )
 
 
-# Backward compatibility alias
-def build_llama_ir(model_id: str) -> ModelIR:
-    """Legacy function - use build_model_ir instead."""
-    return build_model_ir(model_id)

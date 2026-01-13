@@ -12,12 +12,8 @@
     {"type": "SRAM", "capacity_gb": 0.25, "bandwidth_gbps": 65536.0},
     {"type": "HBM", "capacity_gb": 192.0, "bandwidth_gbps": 8192.0}
   ],
-  "hbm_capacity_gb": 192.0,
-  "hbm_bandwidth_gbps": 8192.0,
   "interconnect_bandwidth_gbps": 900.0,
   "interconnect_latency_us": 0.20,
-  "chips_per_node": 2,
-  "nodes_per_cluster": 1
+  "chips_per_node": 8,
+  "nodes_per_cluster": 8
 }
-
-2**16 = 65536
