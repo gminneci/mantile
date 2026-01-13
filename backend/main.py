@@ -51,6 +51,22 @@ class PhaseMetricsRequest(BaseModel):
     layers: Dict[str, Dict[str, Any]] = {}
 
 
+def _construct_layer(layer_class: Type, specs: Dict[str, Any], dtype_enum: DataType, parallelism: Dict[str, Any]):
+    """Safely construct a layer instance by filtering JSON specs to the class __init__ signature.
+
+    Many JSON configs include fields like input_dim/output_dim/parameter_count that are not accepted by
+    specific layer constructors. This helper filters the specs to only accepted parameters and ensures a
+    sensible default for required fields like layer_idx.
+    """
+    import inspect
+    sig = inspect.signature(layer_class.__init__)
+    allowed = {k: v for k, v in specs.items() if k in sig.parameters}
+    if 'layer_idx' in sig.parameters and 'layer_idx' not in allowed:
+        # default to 0 if not present in specs
+        allowed['layer_idx'] = specs.get('layer_idx', 0)
+    return layer_class(**allowed, dtype=dtype_enum, parallelism=parallelism)
+
+
 def _resolve_layer_class(name: str):
     """Resolve a JSON 'class' name to a Python Layer subclass in backend.layers.
     
@@ -143,7 +159,7 @@ def compute_layer_metrics(req: LayerMetricsRequest):
     supported = layer_class.get_supported_parallelism()
     parallelism = {p: getattr(req, p) for p in supported if hasattr(req, p)}
     dtype_enum = DataType(req.dtype.lower())
-    layer = layer_class(**layer_type["specs"], dtype=dtype_enum, parallelism=parallelism)
+    layer = _construct_layer(layer_class, layer_type["specs"], dtype_enum, parallelism)
 
     # Determine phase (default to PREFILL)
     phase = Phase(req.phase.lower())
@@ -207,7 +223,7 @@ def compute_phase_metrics(phase_req: PhaseMetricsRequest, phase: Phase) -> dict:
         layer_class = _resolve_layer_class(layer_type['class'])
         parallelism = {p: config.get(p, 1) for p in layer_class.get_supported_parallelism()}
         dtype_enum = DataType(config.get("dtype", "bf16").lower())
-        layer = layer_class(**layer_type["specs"], dtype=dtype_enum, parallelism=parallelism)
+        layer = _construct_layer(layer_class, layer_type["specs"], dtype_enum, parallelism)
 
         num_instances = layer_type.get("count", 1)
 
