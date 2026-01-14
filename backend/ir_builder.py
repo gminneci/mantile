@@ -1,6 +1,31 @@
 from transformers import AutoConfig
-from .models import ModelIR, LayerSpecs
+from pydantic import BaseModel
+from typing import List, Optional
 import os
+
+
+class LayerSpecs(BaseModel):
+    """Layer specification for IR builder."""
+    name: str
+    layer_idx: int
+    module_type: str
+    input_dim: int
+    output_dim: int
+    parameter_count: int
+    num_heads: Optional[int] = None
+    head_dim: Optional[int] = None
+    kv_heads: Optional[int] = None
+    hidden_dim: Optional[int] = None
+
+
+class ModelIR(BaseModel):
+    """Intermediate representation of a model."""
+    name: str
+    hidden_size: int
+    num_layers: int
+    vocab_size: int
+    layers: List[LayerSpecs]
+
 
 def build_model_ir(model_id: str, token: str = None) -> ModelIR:
     """
