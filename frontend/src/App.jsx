@@ -14,16 +14,16 @@ export default function App() {
   
   // STATE STRUCTURE: model (system), prefill/decode (phase), layerConfigs (per-type)
   const [config, setConfig] = useState({
-    model: '', // System level: model ID only
+    model: 'llama_3.3_70b', // System level: model ID only
     prefill: {
-      hardware: '',
-      batchSize: null,
-      seqLen: null
+      hardware: 'nvidia_nvl72_rack',
+      batchSize: 128,
+      seqLen: 1024
     },
     decode: {
-      hardware: '',
-      batchSize: null,
-      seqLen: null
+      hardware: 'nvidia_nvl72_rack',
+      batchSize: 128,
+      seqLen: 1024
     },
     layerConfigs: {} // Layer TYPE configs: {[type]: {prefill: {tp, cp, sp}, decode: {tp, cp, sp}, dtype}}
   });
@@ -39,16 +39,23 @@ export default function App() {
   const [availableDtypesPrefill, setAvailableDtypesPrefill] = useState(['bf16', 'fp16', 'fp8', 'int8']);
   const [availableDtypesDecode, setAvailableDtypesDecode] = useState(['bf16', 'fp16', 'fp8', 'int8']);
   
-  // Comparison Mode (TODO: Phase 4)
+  // Comparison Mode
   const [comparisonMode, setComparisonMode] = useState(false);
-  // Note: config2 will be refactored in Phase 4 to match new structure
-  const [config2, setConfig2] = useState({
-    model: 'TinyLlama/TinyLlama-1.1B-Chat-v1.0',
-    prefill: { hardware: 'nvidia_gb200_single', batchSize: null, seqLen: null },
-    decode: { hardware: 'nvidia_gb200_single', batchSize: null, seqLen: null },
-    layerConfigs: {},
-    metrics: null
+  const [comparisonConfig, setComparisonConfig] = useState({
+    model: '',
+    prefill: {
+      hardware: '',
+      batchSize: null,
+      seqLen: null
+    },
+    decode: {
+      hardware: '',
+      batchSize: null,
+      seqLen: null
+    },
+    layerConfigs: {}
   });
+  const [comparisonMetrics, setComparisonMetrics] = useState(null);
   
   // Helper: derive dtype list from hardware capabilities
   const deriveDtypes = (hw) => {
@@ -116,33 +123,61 @@ export default function App() {
     );
   };
 
-  // TODO: Phase 4 - Refactor comparison mode initialization with new structure
-  // Initialize config2 layers when comparison mode is enabled
-  useEffect(() => {
-    if (comparisonMode && layers.length > 0) {
-      // Initialize both prefill and decode layer configs
-      const defaultConfigs = {};
-      layers.forEach(layer => {
-        defaultConfigs[layer.name] = {
-          prefill: {
-            tp_degree: 1,
-            cp_degree: 1,
-            sp_degree: 1
-          },
-          decode: {
-            tp_degree: 1,
-            cp_degree: 1,
-            sp_degree: 1
-          },
-          dtype: 'bf16'
+  // Helper: Build comparison metrics request
+  const buildComparisonMetricsRequest = () => {
+    const buildPhaseRequest = (phase) => {
+      const phaseConfig = comparisonConfig[phase];
+      
+      const layersDict = {};
+      
+      layers.forEach(layerMeta => {
+        const layerTypeConfig = comparisonConfig.layerConfigs[layerMeta.name];
+        const phaseParallelism = layerTypeConfig[phase];
+        
+        layersDict[layerMeta.name] = {
+          tensor_parallel: phaseParallelism.tp_degree,
+          context_parallel: phaseParallelism.cp_degree,
+          sequence_parallel: phaseParallelism.sp_degree,
+          dtype: layerTypeConfig.dtype
         };
       });
-      setConfig2(prev => ({
-        ...prev,
-        layerConfigs: defaultConfigs
-      }));
-    }
-  }, [comparisonMode, layers]);
+
+      return {
+        model_id: comparisonConfig.model,
+        hardware_config: phaseConfig.hardware,
+        batch_size: Number(phaseConfig.batchSize),
+        seq_len: Number(phaseConfig.seqLen),
+        layers: layersDict
+      };
+    };
+
+    return {
+      prefill_req: buildPhaseRequest('prefill'),
+      decode_req: buildPhaseRequest('decode')
+    };
+  };
+
+  // Helper: Check if comparison config is complete
+  const isComparisonConfigComplete = () => {
+    const hasAllLayerConfigs = layers.every(layer => {
+      const cfg = comparisonConfig.layerConfigs[layer.name];
+      return cfg && cfg.dtype;
+    });
+    
+    return (
+      comparisonConfig.model &&
+      comparisonConfig.prefill.hardware &&
+      comparisonConfig.prefill.batchSize !== null &&
+      comparisonConfig.prefill.seqLen !== null &&
+      comparisonConfig.decode.hardware &&
+      comparisonConfig.decode.batchSize !== null &&
+      comparisonConfig.decode.seqLen !== null &&
+      Object.keys(comparisonConfig.layerConfigs).length > 0 &&
+      hasAllLayerConfigs
+    );
+  };
+
+
 
   // Load layers (stateless - no server-side state)
   const loadLayers = async () => {
@@ -171,7 +206,7 @@ export default function App() {
             cp_degree: 1,
             sp_degree: 1
           },
-          dtype: '' // Must be set by user (same for both phases)
+          dtype: 'fp8' // Default to FP8
         };
       });
       
@@ -253,12 +288,41 @@ export default function App() {
     }
   };
 
+  // Compute comparison metrics
+  const computeComparisonMetrics = async () => {
+    if (!isComparisonConfigComplete()) {
+      console.log('Comparison config incomplete, skipping metrics computation');
+      return;
+    }
+    
+    try {
+      const requestPayload = buildComparisonMetricsRequest();
+      console.log('Computing comparison metrics with payload:', requestPayload);
+      
+      const response = await axios.post(`${API_URL}/config/system-metrics`, requestPayload);
+      setComparisonMetrics(response.data);
+      console.log('Comparison metrics response:', response.data);
+    } catch (err) {
+      console.error('Failed to compute comparison metrics:', err);
+      if (err.response?.data) {
+        console.error('Backend error:', err.response.data);
+      }
+    }
+  };
+
   // Auto-compute metrics when config changes (only if complete)
   useEffect(() => {
     if (isConfigComplete()) {
       computeMetrics();
     }
   }, [config]);
+
+  // Auto-compute comparison metrics when comparison config changes
+  useEffect(() => {
+    if (comparisonMode && isComparisonConfigComplete()) {
+      computeComparisonMetrics();
+    }
+  }, [comparisonConfig, comparisonMode]);
 
   // Helper: Copy prefill config to decode (phase level only)
   const copyPrefillToDecodePhase = () => {
@@ -311,39 +375,78 @@ export default function App() {
 
   return (
     <div className="app-container" style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: '#0F1729' }}>
-      {/* Top Bar - Model Selection (Shared) */}
+      {/* Top Bar */}
       <header style={{
         backgroundColor: '#1D2F61',
         padding: '1rem 2rem',
         borderBottom: '1px solid #29AF83',
         display: 'flex',
         alignItems: 'center',
+        justifyContent: 'space-between',
         gap: '1rem'
       }}>
-        <Activity size={24} className="text-accent" />
-        <h1 className="text-xl font-bold tracking-tight text-white">Mantile</h1>
-        
-        <div className="ml-auto flex items-center gap-4">
-          <label className="text-sm text-gray-300">Model:</label>
-          <select
-            value={config.model}
-            onChange={(e) => {
-              const newModel = e.target.value;
-              setConfig(prev => ({...prev, model: newModel}));
-            }}
-            disabled={loading}
-            className="input-field"
-            style={{ width: '300px' }}
-          >
-            <option value="">Select a model...</option>
-            <option value="tinyllama_1.1b">TinyLlama 1.1B Chat</option>
-            <option value="llama_3.3_70b">Llama 3.3 70B Instruct</option>
-          </select>
+        <div className="flex items-center gap-2">
+          <img src="/mantile-logo.png" alt="Mantile" style={{ height: '38px' }} />
         </div>
+        
+        <button
+          onClick={() => {
+            if (!comparisonMode) {
+              // Initialize comparison config with same values as primary
+              setComparisonConfig({
+                model: config.model,
+                prefill: { ...config.prefill },
+                decode: { ...config.decode },
+                layerConfigs: JSON.parse(JSON.stringify(config.layerConfigs))
+              });
+            }
+            setComparisonMode(!comparisonMode);
+          }}
+          style={{
+            fontSize: '0.9rem',
+            marginLeft: 'auto',
+            color: '#D1D5DB',
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            padding: '0.5rem 1rem'
+          }}
+        >
+          {comparisonMode ? 'Exit Comparison' : 'Compare Systems'}
+        </button>
       </header>
 
       {/* Main Layout: Two Sidebars + Content */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        {/* Primary Sidebars Container */}
+        <div style={{ position: 'relative', display: 'flex' }}>
+          {/* Model Selection - Spans Both Primary Phases */}
+          <div style={{ 
+            position: 'absolute',
+            left: '0',
+            top: '0',
+            width: '600px',
+            backgroundColor: '#1D2F61',
+            padding: '1.5rem',
+            borderBottom: '1px solid #29AF83',
+            zIndex: 100
+          }}>
+            <label className="label">Model</label>
+            <select
+              value={config.model}
+              onChange={(e) => {
+                const newModel = e.target.value;
+                setConfig(prev => ({...prev, model: newModel}));
+              }}
+              disabled={loading}
+              className="input-field"
+            >
+              <option value="">Select a model...</option>
+              <option value="tinyllama_1.1b">TinyLlama 1.1B Chat</option>
+              <option value="llama_3.3_70b">Llama 3.3 70B Instruct</option>
+            </select>
+          </div>
+
         {/* Left Sidebar - Prefill Phase Configuration */}
         <aside style={{
           width: '300px',
@@ -351,8 +454,11 @@ export default function App() {
           backgroundColor: '#1D2F61',
           padding: '1.5rem',
           overflowY: 'auto',
+          borderLeft: '1px solid #29AF83',
           borderRight: '1px solid #29AF83'
         }}>
+          <div style={{ height: '95px' }} />
+
           {/* Prefill Phase Configuration */}
         {layers.length > 0 && (
           <>
@@ -435,8 +541,12 @@ export default function App() {
         backgroundColor: '#1D2F61',
         padding: '1.5rem',
         overflowY: 'auto',
+        borderLeft: '1px solid #10B981',
         borderRight: '1px solid #10B981'
       }}>
+        {/* Spacer to align with model dropdown in prefill sidebar */}
+        <div style={{ height: '95px' }} />
+        
         {/* Decode Phase Configuration */}
         {layers.length > 0 && (
           <>
@@ -463,13 +573,14 @@ export default function App() {
                         }, {})
                       }));
                     }}
-                    className="text-xs px-2 py-1 rounded"
+                    className="text-xs"
                     style={{
-                      backgroundColor: '#10B981',
-                      color: 'white',
+                      background: 'none',
+                      color: '#10B981',
                       border: 'none',
                       cursor: 'pointer',
-                      fontSize: '0.75rem'
+                      fontSize: '0.75rem',
+                      padding: '0'
                     }}
                     title="Copy all configuration from Prefill phase"
                   >
@@ -543,9 +654,10 @@ export default function App() {
           </div>
         )}
       </aside>
+      </div> {/* End Primary Sidebars Container */}
 
       {/* Main Content Area */}
-      <main className="flex-1 p-8 overflow-y-auto">
+      <main className="flex-1 p-8 overflow-y-auto" style={{ width: '100%', minWidth: 0 }}>
         {error && (
           <motion.div
             initial={{ opacity: 0, y: -20 }}
@@ -562,42 +674,20 @@ export default function App() {
 
         {layers.length > 0 && (
           <>
-            {/* Compute Button */}
-            <div className="mb-6 flex items-center gap-4">
-              <button
-                className="btn btn-primary"
-                disabled={!isConfigComplete() || loading}
-                onClick={computeMetrics}
-                style={{
-                  opacity: isConfigComplete() ? 1 : 0.5,
-                  cursor: isConfigComplete() ? 'pointer' : 'not-allowed'
-                }}
-              >
-                {loading ? (
-                  <span className="flex items-center gap-2">
-                    <Activity size={16} className="animate-spin" />
-                    Computing...
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-2">
-                    <CheckCircle2 size={16} />
-                    Compute System Metrics
-                  </span>
-                )}
-              </button>
-              
-              {!isConfigComplete() && (
-                <p className="text-red-400 text-sm">
-                  All fields must be filled before computing metrics
-                </p>
-              )}
-            </div>
+            {/* Auto-computing status indicator */}
+            {loading && (
+              <div className="mb-4 flex items-center gap-2 text-sm text-gray-400">
+                <Activity size={16} className="animate-spin" />
+                <span>Computing metrics...</span>
+              </div>
+            )}
 
             {/* Metrics Display */}
             {metrics && (
-              <div className="mt-8">
-                <MetricsDisplay metrics={metrics} />
-              </div>
+              <MetricsDisplay 
+                metrics={metrics} 
+                comparisonMetrics={comparisonMode ? comparisonMetrics : null}
+              />
             )}
           </>
         )}
@@ -613,6 +703,287 @@ export default function App() {
           </div>
         )}
         </main>
+
+        {/* Comparison Sidebars - Only shown when comparison mode is active */}
+        {comparisonMode && (
+          <div style={{ position: 'relative', display: 'flex', marginLeft: 'auto' }}>
+            {/* Model Selection - Spans Both Comparison Phases */}
+            <div style={{ 
+              position: 'absolute',
+              left: '0',
+              top: '0',
+              width: '600px',
+              backgroundColor: '#1D2F61',
+              padding: '1.5rem',
+              borderBottom: '1px solid #f96c56',
+              zIndex: 100
+            }}>
+              <label className="label">Model</label>
+              <select
+                value={comparisonConfig.model}
+                onChange={(e) => {
+                  const newModel = e.target.value;
+                  setComparisonConfig(prev => ({...prev, model: newModel}));
+                }}
+                disabled={loading}
+                className="input-field"
+              >
+                <option value="">Select a model...</option>
+                <option value="tinyllama_1.1b">TinyLlama 1.1B Chat</option>
+                <option value="llama_3.3_70b">Llama 3.3 70B Instruct</option>
+              </select>
+            </div>
+
+            {/* Comparison Prefill Sidebar */}
+            <aside style={{
+              width: '300px',
+              minWidth: '300px',
+              backgroundColor: '#1D2F61',
+              padding: '1.5rem',
+              overflowY: 'auto',
+              borderLeft: '1px solid #f96c56',
+              borderRight: '1px solid #f96c56'
+            }}>
+              <div style={{ height: '95px' }} />
+
+              {/* Prefill Phase Configuration */}
+              {layers.length > 0 && (
+                <>
+                  <div className="flex flex-col gap-4 mb-6">
+                    <h3 className="text-white font-bold flex items-center gap-2" style={{ color: '#f96c56' }}>
+                      🔹 Prefill
+                    </h3>
+                    
+                    {/* Hardware */}
+                    <div>
+                      <label className="label">Hardware</label>
+                      <select
+                        value={comparisonConfig.prefill.hardware}
+                        onChange={(e) => setComparisonConfig(prev => ({...prev, prefill: {...prev.prefill, hardware: e.target.value}}))}
+                        className="input-field"
+                      >
+                        <option value="">Select hardware...</option>
+                        <option value="nvidia_gb200_single">NVIDIA GB200 (Single)</option>
+                        <option value="nvidia_nvl72_rack">NVIDIA NVL-72 (Full Rack)</option>
+                        <option value="nvidia_h100_80gb">NVIDIA H100 80GB</option>
+                      </select>
+                    </div>
+
+                    {/* Runtime Parameters */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="label">Batch Size</label>
+                        <input
+                          type="number"
+                          value={comparisonConfig.prefill.batchSize || ''}
+                          onChange={(e) => setComparisonConfig(prev => ({...prev, prefill: {...prev.prefill, batchSize: parseInt(e.target.value) || null}}))}
+                          placeholder="1"
+                          className="input-field"
+                          min="1"
+                        />
+                      </div>
+                      <div>
+                        <label className="label">Seq Length</label>
+                        <input
+                          type="number"
+                          value={comparisonConfig.prefill.seqLen || ''}
+                          onChange={(e) => setComparisonConfig(prev => ({...prev, prefill: {...prev.prefill, seqLen: parseInt(e.target.value) || null}}))}
+                          placeholder="2048"
+                          className="input-field"
+                          min="1"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Layer Configuration Cards */}
+                  <div className="flex flex-col gap-4" style={{ marginTop: '1.5rem' }}>
+                    <h3 className="text-accent font-semibold flex items-center gap-2">
+                      <Layers size={18} /> Layer Configuration
+                    </h3>
+                    {layers.map(layer => (
+                      <LayerConfigCard
+                        key={layer.name}
+                        layer={layer}
+                        config={comparisonConfig.layerConfigs[layer.name]}
+                        onConfigChange={(layerName, phase, field, value) => {
+                          setComparisonConfig(prev => ({
+                            ...prev,
+                            layerConfigs: {
+                              ...prev.layerConfigs,
+                              [layerName]: {
+                                ...prev.layerConfigs[layerName],
+                                ...(phase ? {
+                                  [phase]: {
+                                    ...prev.layerConfigs[layerName]?.[phase],
+                                    [field]: value
+                                  }
+                                } : {
+                                  [field]: value
+                                })
+                              }
+                            }
+                          }));
+                        }}
+                        phase="prefill"
+                        accentColor="#f96c56"
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {!layers.length && (
+                <div className="text-dim text-sm italic text-center mt-8">
+                  Select a model to begin
+                </div>
+              )}
+            </aside>
+
+            {/* Comparison Decode Sidebar */}
+            <aside style={{
+              width: '300px',
+              minWidth: '300px',
+              backgroundColor: '#1D2F61',
+              padding: '1.5rem',
+              overflowY: 'auto',
+              borderLeft: '1px solid #f96c56',
+              borderRight: '1px solid #f96c56'
+            }}>
+              {/* Spacer to align with model dropdown in prefill sidebar */}
+              <div style={{ height: '95px' }} />
+              
+              {/* Decode Phase Configuration */}
+              {layers.length > 0 && (
+                <>
+                  <div className="flex flex-col gap-4 mb-6">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-white font-bold flex items-center gap-2" style={{ color: '#f96c56' }}>
+                        🔸 Decode
+                      </h3>
+                      <button
+                        onClick={() => {
+                          setComparisonConfig(prev => ({
+                            ...prev,
+                            decode: {
+                              hardware: prev.prefill.hardware,
+                              batchSize: prev.prefill.batchSize,
+                              seqLen: prev.prefill.seqLen
+                            }
+                          }));
+                          const copiedConfigs = {};
+                          Object.keys(comparisonConfig.layerConfigs).forEach(layerName => {
+                            copiedConfigs[layerName] = {
+                              ...comparisonConfig.layerConfigs[layerName],
+                              decode: { ...comparisonConfig.layerConfigs[layerName].prefill }
+                            };
+                          });
+                          setComparisonConfig(prev => ({
+                            ...prev,
+                            layerConfigs: copiedConfigs
+                          }));
+                        }}
+                        className="text-xs"
+                        style={{
+                          background: 'none',
+                          color: '#f96c56',
+                          border: 'none',
+                          cursor: 'pointer',
+                          fontSize: '0.75rem',
+                          padding: '0'
+                        }}
+                      >
+                        Copy from Prefill
+                      </button>
+                    </div>
+                    
+                    {/* Hardware */}
+                    <div>
+                      <label className="label">Hardware</label>
+                      <select
+                        value={comparisonConfig.decode.hardware}
+                        onChange={(e) => setComparisonConfig(prev => ({...prev, decode: {...prev.decode, hardware: e.target.value}}))}
+                        className="input-field"
+                      >
+                        <option value="">Select hardware...</option>
+                        <option value="nvidia_gb200_single">NVIDIA GB200 (Single)</option>
+                        <option value="nvidia_nvl72_rack">NVIDIA NVL-72 (Full Rack)</option>
+                        <option value="nvidia_h100_80gb">NVIDIA H100 80GB</option>
+                      </select>
+                    </div>
+
+                    {/* Runtime Parameters */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="label">Batch Size</label>
+                        <input
+                          type="number"
+                          value={comparisonConfig.decode.batchSize || ''}
+                          onChange={(e) => setComparisonConfig(prev => ({...prev, decode: {...prev.decode, batchSize: parseInt(e.target.value) || null}}))}
+                          placeholder="1"
+                          className="input-field"
+                          min="1"
+                        />
+                      </div>
+                      <div>
+                        <label className="label">Seq Length</label>
+                        <input
+                          type="number"
+                          value={comparisonConfig.decode.seqLen || ''}
+                          onChange={(e) => setComparisonConfig(prev => ({...prev, decode: {...prev.decode, seqLen: parseInt(e.target.value) || null}}))}
+                          placeholder="1"
+                          className="input-field"
+                          min="1"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Layer Configuration Cards */}
+                  <div className="flex flex-col gap-4" style={{ marginTop: '1.5rem' }}>
+                    <h3 className="text-accent font-semibold flex items-center gap-2">
+                      <Layers size={18} /> Layer Configuration
+                    </h3>
+                    {layers.map(layer => (
+                      <LayerConfigCard
+                        key={layer.name}
+                        layer={layer}
+                        config={comparisonConfig.layerConfigs[layer.name]}
+                        onConfigChange={(layerName, phase, field, value) => {
+                          setComparisonConfig(prev => ({
+                            ...prev,
+                            layerConfigs: {
+                              ...prev.layerConfigs,
+                              [layerName]: {
+                                ...prev.layerConfigs[layerName],
+                                ...(phase ? {
+                                  [phase]: {
+                                    ...prev.layerConfigs[layerName]?.[phase],
+                                    [field]: value
+                                  }
+                                } : {
+                                  [field]: value
+                                })
+                              }
+                            }
+                          }));
+                        }}
+                        phase="decode"
+                        accentColor="#f96c56"
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {!layers.length && (
+                <div className="text-dim text-sm italic text-center mt-8">
+                  Select a model to begin
+                </div>
+              )}
+            </aside>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -10,7 +10,8 @@ export default function LayerConfigCard({
   layer, 
   config, 
   onConfigChange,
-  phase = 'prefill' // 'prefill' or 'decode'
+  phase = 'prefill', // 'prefill' or 'decode'
+  accentColor = '#29AF83' // Default teal, can be overridden with orange
 }) {
   const availableStrategies = layer.available_parallelism || [];
   const maxChips = 8; // Configurable max
@@ -37,7 +38,7 @@ export default function LayerConfigCard({
             <span className="text-dim text-sm font-mono">({layer.count}x)</span>
           </h4>
         </div>
-        {config && dtype && <CheckCircle size={18} className="text-accent" />}
+        {config && dtype && <CheckCircle size={18} style={{ color: accentColor }} />}
       </div>
 
       {availableStrategies.length > 0 ? (
@@ -48,7 +49,7 @@ export default function LayerConfigCard({
             
             return (
               <div key={strategy}>
-                <label className="text-dim text-xs uppercase tracking-wider">
+                <label className="text-dim uppercase tracking-wider" style={{ fontSize: '0.7rem' }}>
                   {mapping.label}
                 </label>
                 <div className="flex items-center gap-3 mt-1">
@@ -60,11 +61,11 @@ export default function LayerConfigCard({
                     onChange={(e) => onConfigChange(layer.name, phase, mapping.key, parseInt(e.target.value))}
                     className="flex-1 w-full h-2 rounded-lg appearance-none cursor-pointer"
                     style={{ 
-                      accentColor: '#29AF83',
+                      accentColor: accentColor,
                       backgroundColor: '#1D2F61'
                     }}
                   />
-                  <span className="text-accent font-mono text-sm w-8 text-right">
+                  <span className="font-mono text-sm w-8 text-right" style={{ color: accentColor }}>
                     {phaseConfig[mapping.key]}
                   </span>
                 </div>
@@ -78,7 +79,7 @@ export default function LayerConfigCard({
 
       {/* Data Type Selection */}
       <div className="flex items-center gap-3 mt-3 pt-3 border-t border-surface" style={{ borderColor: '#526497' }}>
-        <label className="text-dim text-xs uppercase tracking-wider whitespace-nowrap">Data Type</label>
+        <label className="text-dim uppercase tracking-wider whitespace-nowrap" style={{ fontSize: '0.7rem' }}>Data Type</label>
         <select
           className="input-field text-xs"
           style={{ 

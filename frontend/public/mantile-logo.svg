@@ -1,0 +1,9 @@
+<svg width="1220" height="260" viewBox="0 0 1220 260" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M45 250V80L15 40V250H0V10L45 75L90 10V250H75V40L45 80V250Z" fill="none" stroke="#E5E7EB" stroke-width="3"/>
+  <path d="M170 250H140L140 65L170 20L245 65V250H215V80L170 50V250Z" fill="none" stroke="#E5E7EB" stroke-width="3"/>
+  <path d="M340 250H310L310 80L345 140L345 10H375V250H345L280 120V250Z" fill="none" stroke="#E5E7EB" stroke-width="3"/>
+  <path d="M465 250V50H445V10H555V50H535V250H505V50H485V250H465Z" fill="none" stroke="#E5E7EB" stroke-width="3"/>
+  <path d="M625 250V10H655V250H625Z" fill="none" stroke="#E5E7EB" stroke-width="3"/>
+  <path d="M745 250V10H775V210H865V250H745Z" fill="none" stroke="#E5E7EB" stroke-width="3"/>
+  <path d="M965 250V10H1085V50H995V110H1075V150H995V210H1085V250H965Z" fill="none" stroke="#E5E7EB" stroke-width="3"/>
+</svg>
