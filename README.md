@@ -94,6 +94,33 @@ The frontend is a React application built with Vite, providing an interactive UI
 
 ---
 
+## Roadmap
+
+### Layer-Level Metrics
+- [ ] Add detailed per-layer metrics view showing compute, memory, and communication breakdown
+- [ ] Visualize bottlenecks at the layer level (e.g., attention vs MLP compute/memory trade-offs)
+- [ ] Support layer-by-layer profiling to identify optimization opportunities
+
+### Validation & Calibration
+- [ ] Validate predictions against real inference frameworks (InferenceMax, vLLM, TGI)
+- [ ] Calibrate model FLOPs utilization (MFU) based on empirical measurements
+- [ ] Add roofline model analysis for compute vs memory-bound identification
+- [ ] Benchmark against production inference systems for accuracy validation
+
+### Agentic IR Builder
+- [ ] Make IR builder autonomous: automatically infer model architectures from HuggingFace configs
+- [ ] Support automatic layer detection and parallelism strategy suggestions
+- [ ] Enable AI-assisted model configuration generation from model cards
+- [ ] Implement automated testing for newly added models
+
+### Contribution Automation
+- [ ] Create automated workflows for validating new hardware configurations
+- [ ] Build CI/CD pipelines for testing model configurations against known benchmarks
+- [ ] Enable community contributions through automated validation and testing
+- [ ] Develop tooling for semi-automated addition of new hardware accelerators
+
+---
+
 ## License
 
 Copyright © 2026 Fractile AI. All rights reserved.
