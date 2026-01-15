@@ -27,20 +27,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class LayerMetricsRequest(BaseModel):
-    """Stateless request for layer metrics - includes all necessary context."""
-    model_id: str
-    hardware_config: str
-    layer_type: str
-    batch_size: int
-    seq_length: int
-    dtype: str
-    phase: Optional[str] = None
-    tensor_parallel: int = 1
-    context_parallel: int = 1
-    sequence_parallel: int = 1
-
-
 class PhaseMetricsRequest(BaseModel):
     """Stateless request for a single phase (prefill or decode) - includes all necessary context."""
     model_id: str
@@ -128,63 +114,6 @@ def get_layers_info(model_id: str):
         })
 
     return {"layers": layers_out}
-
-
-@app.post("/config/layer-metrics")
-def compute_layer_metrics(req: LayerMetricsRequest):
-    """
-    Stateless endpoint: Compute metrics for a specific layer type.
-    Uses layer name to look up specs from model config JSON.
-    Returns metrics for a single layer instance (no aggregation by count).
-    """
-    # Load model and hardware config
-    model_cfg = load_model_config(req.model_id)
-
-    # Find layer type by name in config
-    matches = [lt for lt in model_cfg["layer_types"] if lt.get("name") == req.layer_type]
-    if len(matches) > 1:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Duplicate layers '{req.layer_type}' found in model config"
-        )
-    if not matches:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Layer '{req.layer_type}' missing from model config"
-        )
-    layer_type = matches[0]
-
-    # Resolve and instantiate layer
-    layer_class = _resolve_layer_class(layer_type["class"])
-    supported = layer_class.get_supported_parallelism()
-    parallelism = {p: getattr(req, p) for p in supported if hasattr(req, p)}
-    dtype_enum = DataType(req.dtype.lower())
-    layer = _construct_layer(layer_class, layer_type["specs"], dtype_enum, parallelism)
-
-    # Determine phase (default to PREFILL)
-    phase = Phase(req.phase.lower())
-
-    # Compute layer metrics (per layer instance)
-    m = layer.compute_metrics(
-        batch_size=req.batch_size,
-        seq_len=req.seq_length,
-        phase=phase,
-    )
-
-    return {
-        "num_chips": m.num_chips,
-        "memory": {
-            "total_weights_gb": m.weight_memory_total / 1e9,
-            "total_activation_gb": m.activation_memory_total / 1e9,
-            "kv_cache_gb": m.kv_cache_total / 1e9,
-            "weights_per_chip_gb": m.weight_memory_per_chip / 1e9,
-            "activation_per_chip_gb": m.activation_memory_per_chip / 1e9,
-            "kv_cache_per_chip_gb": m.kv_cache_per_chip / 1e9,
-        },
-        "compute": {
-            "total_flops_tflops": m.flops_total / 1e12,
-        },
-    }
 
 
 def compute_phase_metrics(phase_req: PhaseMetricsRequest, phase: Phase) -> dict:

@@ -72,7 +72,7 @@ export default function MetricsDisplay({ metrics, comparisonMetrics = null }) {
       {/* System-Level Metrics (Most Prominent) */}
       {system && (
         <div className="mb-8" style={{ width: '100%' }}>
-          <div className="flex items-center justify-center gap-3" style={{ marginBottom: '1.75rem' }}>
+          <div className="flex items-center justify-center gap-3" style={{ marginBottom: '1.75rem', paddingLeft: '1.4rem', paddingRight: '1.4rem' }}>
             <Zap size={24} className="text-accent" />
             <h2 className="text-2xl font-bold text-white">System Metrics</h2>
           </div>

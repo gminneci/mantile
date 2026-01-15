@@ -462,7 +462,7 @@ export default function App() {
           {/* Prefill Phase Configuration */}
         {layers.length > 0 && (
           <>
-            <div className="flex flex-col gap-4 mb-6">
+            <div className="flex flex-col gap-4 mb-6" style={{ marginTop: '1.5rem' }}>
               <h3 className="text-white font-bold flex items-center gap-2" style={{ color: '#3B82F6' }}>
                 🔹 Prefill
               </h3>
@@ -550,7 +550,7 @@ export default function App() {
         {/* Decode Phase Configuration */}
         {layers.length > 0 && (
           <>
-              <div className="flex flex-col gap-4 mb-6">
+              <div className="flex flex-col gap-4 mb-6" style={{ marginTop: '1.5rem' }}>
                 <div className="flex items-center justify-between">
                   <h3 className="text-white font-bold flex items-center gap-2" style={{ color: '#10B981' }}>
                     🔸 Decode
@@ -749,7 +749,7 @@ export default function App() {
               {/* Prefill Phase Configuration */}
               {layers.length > 0 && (
                 <>
-                  <div className="flex flex-col gap-4 mb-6">
+                  <div className="flex flex-col gap-4 mb-6" style={{ marginTop: '1.5rem' }}>
                     <h3 className="text-white font-bold flex items-center gap-2" style={{ color: '#f96c56' }}>
                       🔹 Prefill
                     </h3>
@@ -856,7 +856,7 @@ export default function App() {
               {/* Decode Phase Configuration */}
               {layers.length > 0 && (
                 <>
-                  <div className="flex flex-col gap-4 mb-6">
+                  <div className="flex flex-col gap-4 mb-6" style={{ marginTop: '1.5rem' }}>
                     <div className="flex items-center justify-between">
                       <h3 className="text-white font-bold flex items-center gap-2" style={{ color: '#f96c56' }}>
                         🔸 Decode
