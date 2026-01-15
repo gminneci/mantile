@@ -1,6 +1,20 @@
-# Mantile – LLM Performance Estimator
+# Mantile (μάντις)
 
-An app to estimate LLM inference performance (latency, throughput, memory) on modern AI accelerators using a stateless backend API.
+**Mantile** blends _Fractile_ (the company) with the Greek **μάντις** (_mantis_), meaning "prophet," "seer," or "one who divines." In ancient Greece, a _mantis_ was a religious specialist inspired by the gods, capable of foretelling the future. Like its namesake, Mantile predicts LLM inference performance—estimating latency, throughput, and memory usage on modern AI accelerators.
+
+---
+
+## Philosophy
+
+Mantile is designed with three core principles:
+
+1. **Test-Driven Development**: Contributors add tests for new layers, parallelism strategies, or model configurations. The codebase is designed for AI-assisted development, where agents can validate tests and help implement the necessary components.
+
+2. **Stateless Backend**: The FastAPI backend is completely stateless and frontend-agnostic. Every request includes all required context, making the API reusable across different clients and tools.
+
+3. **Extensible Architecture**: New hardware accelerators, model architectures, and optimization strategies can be added through simple JSON configurations and layer implementations.
+
+---
 
 ## Quick Start
 
@@ -8,118 +22,78 @@ An app to estimate LLM inference performance (latency, throughput, memory) on mo
 - Python 3.10+
 - Node.js 18+
 
-### Run locally
+### Run Locally
 
-Backend (FastAPI):
+**Backend (FastAPI):**
+```bash
+./run_backend.sh
+```
+Backend runs on http://localhost:8000
+
+**Frontend (React + Vite):**
+```bash
+./run_frontend.sh
+```
+Frontend runs on http://localhost:5173
+
+Open http://localhost:5173 in your browser to use the interactive configurator.
+
+---
+
+## Contributing
+
+Mantile welcomes contributions! Here's how you can help:
+
+- **Add Tests**: Define expected behavior for new layers or parallelism modes  
+  → See [tests/README.md](/tests/README.md)
+
+- **Add Hardware Configurations**: Define new AI accelerators  
+  → See [backend/data/hardware_configs/README.md](/backend/data/hardware_configs/README.md)
+
+- **Add Model Configurations**: Add support for new LLM architectures  
+  → See [backend/data/model_configs/README.md](/backend/data/model_configs/README.md)
+
+---
+
+## Backend API
+
+The backend provides a stateless REST API for computing LLM inference metrics. All endpoints are frontend-agnostic and fully documented.
+
+**Start the backend:**
 ```bash
 ./run_backend.sh
 ```
 
-Frontend (Vite):
+**Full API reference:**  
+→ See [backend/README.md](/backend/README.md)
+
+**Quick example:**
+```bash
+# Get layer information for a model
+curl "http://localhost:8000/api/layers?model_id=llama_3.3_70b" | jq
+
+# Compute system metrics for prefill + decode
+curl -X POST http://localhost:8000/config/system-metrics \
+  -H 'Content-Type: application/json' \
+  -d '{ "prefill_req": {...}, "decode_req": {...} }'
+```
+
+---
+
+## Frontend
+
+The frontend is a React application built with Vite, providing an interactive UI for configuring LLM inference scenarios and comparing system configurations side-by-side.
+
+**Start the frontend:**
 ```bash
 ./run_frontend.sh
 ```
 
-Open http://localhost:5173 in your browser.
+**Details:**  
+→ See [frontend/README.md](/frontend/README.md)
 
-## Backend API (Stateless)
+---
 
-The backend provides stateless endpoints; each request includes all required context. Key routes:
+## License
 
-- List hardware: `GET /hardware`
-	- Returns `configs` with valid hardware IDs (e.g., `nvidia_gb200_single`, `nvidia_h100_80gb`, `nvidia_nvl72_rack`).
-
-- List models: `GET /models`
-	- Returns `models` (e.g., `llama_3.3_70b`, `tinyllama_1.1b`)
-
-- Model metadata is available via `GET /models`. The per-model details endpoint has been removed to keep the API minimal and stateless.
-
-- Layer types for a model: `GET /api/layers?model_id=...`
-	- Returns layer categories (`attention`, `feedforward`, `norm`, `embedding`) with `count`, `specs`, and `available_parallelism`.
-
-- Layer metrics: `POST /config/layer-metrics`
-	- Body: `{ model_id, hardware_config, layer_type, batch_size, seq_length, dtype, tensor_parallel, context_parallel, sequence_parallel }`
-
-- System metrics: `POST /config/system-metrics`
-	- Body: `{ model_id, hardware_config, batch_size, input_seq, output_seq, layers: { attention, feedforward, norm, embedding } }`
-
-### Example requests
-
-Discover model and hardware IDs:
-```bash
-curl -s http://127.0.0.1:8000/models | jq '.models[0].model_id'
-curl -s http://127.0.0.1:8000/hardware | jq '.configs'
-```
-
-List layer types for Llama 70B:
-```bash
-curl "http://127.0.0.1:8000/api/layers?model_id=llama_3.3_70b"
-```
-
-Compute attention layer metrics on NVL-72 rack:
-```bash
-curl -X POST http://127.0.0.1:8000/config/layer-metrics \
-	-H 'Content-Type: application/json' \
-	-d '{
-		"model_id": "llama_3.3_70b",
-		"hardware_config": "nvidia_nvl72_rack",
-		"layer_type": "attention",
-		"batch_size": 1,
-		"seq_length": 2048,
-		"dtype": "bf16",
-		"tensor_parallel": 8,
-		"context_parallel": 1,
-		"sequence_parallel": 1
-	}'
-```
-
-Compute system metrics:
-```bash
-curl -X POST http://127.0.0.1:8000/config/system-metrics \
-	-H 'Content-Type: application/json' \
-	-d '{
-		"model_id": "llama_3.3_70b",
-		"hardware_config": "nvidia_nvl72_rack",
-		"batch_size": 1,
-		"input_seq": 2048,
-		"output_seq": 128,
-		"layers": {
-			"attention": { "tensor_parallel": 8, "context_parallel": 1, "dtype": "bf16" },
-			"feedforward": { "tensor_parallel": 8, "sequence_parallel": 1, "dtype": "bf16" },
-			"norm": { "tensor_parallel": 1, "dtype": "bf16" },
-			"embedding": { "tensor_parallel": 1, "dtype": "bf16" }
-		}
-	}'
-```
-
-## Notes
-
-- Hardware IDs must match values from `GET /hardware.configs` (e.g., `nvidia_nvl72_rack`).
-- Model IDs come from `GET /models` via the `model_id` field.
-- Legacy endpoints like `/config/load` and `/estimate` were removed; use the stateless endpoints above.
-
-## Project Structure (simplified)
-
-```
-Mantile/
-├── backend/
-│   ├── main.py              # FastAPI server
-│   ├── models.py            # Data models
-│   └── data/
-│       ├── hardware_configs/
-│       └── model_configs/
-├── frontend/
-│   └── src/
-│       ├── App.jsx
-│       └── main.jsx
-└── Instructions.md
-```
-
-## Gated Models
-
-Some HuggingFace models require authentication. If you add gated configs:
-1. Create a HuggingFace account and request model access
-2. Generate a token at https://huggingface.co/settings/tokens
-3. Login: `huggingface-cli login`
-
-TinyLlama 1.1B is open-access and works without auth.
+Copyright © 2026 Fractile AI. All rights reserved.
