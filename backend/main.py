@@ -2,22 +2,17 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, List, Any
-from dotenv import load_dotenv
-import os
+import os, json
+from typing import Type
+import importlib
 
-# Load environment variables from .env file
-load_dotenv()
+from pathlib import Path
+from .layers import Phase, DataType
 
-from .models import HardwareSpecs, ParallelismConfig, ModelIR
-from .hardware_library import get_nvl72_specs, get_nvl72_rack_specs, list_available_configs, load_hardware_config
-from .model_library import list_available_models, load_model_config, get_model_metadata
-from .estimator import estimate_performance
-from .config_service import ConfigurationService
+MODELS_CFG_DIR = Path(__file__).parent / "data" / "model_configs"
+HARDWARE_CONFIGS_DIR = Path(__file__).parent / "data" / "hardware_configs"
 
 app = FastAPI()
-
-# Global service instance (in production, use dependency injection)
-config_service = ConfigurationService()
 
 # CORS Middleware
 app.add_middleware(
@@ -28,593 +23,252 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class EstimateRequest(BaseModel):
-    model_id: str = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-    hardware_preset: str = "nvl72_rack"
-    tp_size: int = 1
-    batch_size: int = 1
-    input_seq: int = 128
-    output_seq: int = 128
-
-@app.get("/hardware")
-def list_hardware():
-    """List all available hardware configurations."""
-    configs = list_available_configs()
-    return {
-        "configs": configs,
-        # Backward compatibility
-        "nvl72_single": get_nvl72_specs().dict(),
-        "nvl72_rack": get_nvl72_rack_specs().dict()
-    }
+class PhaseMetricsRequest(BaseModel):
+    """Stateless request for a single phase (prefill or decode) - includes all necessary context."""
+    model_id: str
+    hardware_id: str
+    batch_size: int
+    seq_len: int
+    # Layer configurations with parallelism and dtype
+    layers: Dict[str, Dict[str, Any]] = {}
 
 
-@app.get("/hardware/{config_name}")
-def get_hardware_details(config_name: str):
-    """Get details for a specific hardware configuration."""
-    try:
-        hw = load_hardware_config(config_name)
-        return hw.dict()
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+def _construct_layer(layer_class: Type, specs: Dict[str, Any], dtype_enum: DataType, parallelism: Dict[str, Any]):
+    """Safely construct a layer instance by filtering JSON specs to the class __init__ signature.
+
+    Many JSON configs include fields like input_dim/output_dim/parameter_count that are not accepted by
+    specific layer constructors. This helper filters the specs to only accepted parameters and ensures a
+    sensible default for required fields like layer_idx.
+    """
+    import inspect
+    sig = inspect.signature(layer_class.__init__)
+    allowed = {k: v for k, v in specs.items() if k in sig.parameters}
+    if 'layer_idx' in sig.parameters and 'layer_idx' not in allowed:
+        # default to 0 if not present in specs
+        allowed['layer_idx'] = specs.get('layer_idx', 0)
+    return layer_class(**allowed, dtype=dtype_enum, parallelism=parallelism)
 
 
-@app.get("/models")
-def list_models():
-    """List all available pre-validated model configurations."""
-    models = list_available_models()
-    # Get metadata for each model
-    model_list = []
-    for model_id in models:
-        try:
-            metadata = get_model_metadata(model_id)
-            model_list.append(metadata)
-        except Exception as e:
-            # Skip models that fail to load
-            continue
-    return {"models": model_list}
+def _resolve_layer_class(name: str):
+    """Resolve a JSON 'class' name to a Python Layer subclass in backend.layers.
+    
+    Assumes JSON class names are well-formed and directly importable.
+    Returns class.
+    """
+    layers_pkg = importlib.import_module("backend.layers")
+    return getattr(layers_pkg, name, None)
 
 
 @app.get("/models/{model_id}")
-def get_model_details(model_id: str):
-    """Get details for a specific model configuration."""
-    try:
-        metadata = get_model_metadata(model_id)
-        return metadata
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+def load_model_config(model_id: str) -> dict:
+    """Load raw model config JSON as dict."""
+    config_path = MODELS_CFG_DIR / f"{model_id}.json"
+    
+    if not config_path.exists():
+        raise FileNotFoundError(
+            f"Model config '{model_id}' not found"
+        )
+    
+    with open(config_path, 'r') as f:
+        cfg = json.load(f)
 
+    # Validate unique layer names
+    names = [lt.get("name") for lt in cfg["layer_types"]]
+    if len(names) != len(set(names)):
+        duplicates = [n for n in names if names.count(n) > 1]
+        raise ValueError(f"Duplicate layer names found in model config: {set(duplicates)}")
 
-# ============================================================
-# NEW ENDPOINTS: Interactive Configuration Flow (Step 5)
-# ============================================================
+    return cfg
 
-class LoadModelRequest(BaseModel):
-    model_id: str
-    hardware_config: str
-
-
-@app.post("/config/load")
-def load_model_and_hardware(req: LoadModelRequest):
+@app.get("/hardware/{config_name}")
+def load_hardware_config(config_name: str) -> Dict[str, Any]:
     """
-    Step 1: Load model and hardware.
-    Returns model info and hardware specs.
+    Load hardware configuration from JSON file
     """
-    try:
-        # Load hardware
-        hw = config_service.load_hardware(req.hardware_config)
-        
-        # Load model
-        model_ir = config_service.load_model(req.model_id)
-        
-        # Validate
-        validation = config_service.validate_model()
-        
-        return {
-            "model": {
-                "id": req.model_id,
-                "num_layers": model_ir.num_layers,
-                "hidden_size": model_ir.hidden_size,
-                "vocab_size": model_ir.vocab_size,
-            },
-            "hardware": {
-                "name": hw.name,
-                "description": hw.description,
-                "bf16_tflops": hw.bf16_tflops,
-                "hbm_capacity_gb": hw.hbm_capacity_gb,
-                "chips_per_node": hw.chips_per_node,
-            },
-            "validation": {
-                "valid": validation.valid,
-                "total_params": validation.total_params,
-                "attention_type": validation.attention_type,
-                "mlp_type": validation.mlp_type,
-                "issues": validation.issues,
-            }
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/config/layer-types")
-def get_layer_types():
-    """
-    Step 2: Get available layer types for parallelism configuration.
-    """
-    try:
-        layer_types = config_service.get_layer_types()
-        return {"layer_types": layer_types}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/config/layers")
-def get_layers_info():
-    """
-    DEPRECATED: Use /api/layers with model_id parameter instead.
-    Get detailed information about all layers in the model.
-    Returns layer types, counts, and available parallelism strategies.
-    """
-    try:
-        if not config_service.model_ir:
-            raise HTTPException(status_code=400, detail="Model not loaded")
-        
-        # Group layers by type
-        layer_info = {}
-        for layer in config_service.model_ir.layers:
-            layer_type = layer.module_type
-            if layer_type not in layer_info:
-                layer_info[layer_type] = {
-                    "type": layer_type,
-                    "count": 0,
-                    "sample_layer": {
-                        "name": layer.name,
-                        "input_dim": layer.input_dim,
-                        "output_dim": layer.output_dim,
-                    },
-                    "available_parallelism": []
-                }
-            layer_info[layer_type]["count"] += 1
-        
-        # Add available parallelism strategies per layer type
-        for layer_type in layer_info:
-            if layer_type == "attention":
-                layer_info[layer_type]["available_parallelism"] = ["tensor_parallel", "context_parallel"]
-            elif layer_type == "feedforward":
-                layer_info[layer_type]["available_parallelism"] = ["tensor_parallel", "sequence_parallel"]
-            elif layer_type == "norm":
-                layer_info[layer_type]["available_parallelism"] = []  # replicated
-            elif layer_type == "embedding":
-                layer_info[layer_type]["available_parallelism"] = []  # replicated
-            
-            # All layers support dtype selection
-            layer_info[layer_type]["available_dtypes"] = ["fp32", "fp16", "bf16", "fp8", "int8"]
-        
-        return {"layers": list(layer_info.values())}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+    config_path = HARDWARE_CONFIGS_DIR / f"{config_name}.json"
+    with open(config_path, 'r') as f:
+        return json.load(f)
 
 @app.get("/api/layers")
-def get_layers_info_stateless(model_id: str):
+def get_layers_info(model_id: str):
     """
-    Stateless endpoint: Get layer information for a specific model.
-    No server-side state required.
+    Get layer information for a specific model.
     """
-    try:
-        # Load pre-validated model config
-        model_ir = load_model_config(model_id)
+    cfg = load_model_config(model_id)
+
+    # Ensure expected format
+    if "layer_types" not in cfg or not isinstance(cfg.get("layer_types"), list):
+        raise HTTPException(status_code=400, detail="Model config missing 'layer_types' list")
+
+    layers_out = []
+
+    for lt in cfg["layer_types"]:
+        cls = _resolve_layer_class(lt["class"])
+        layers_out.append({
+            **lt,
+            "available_parallelism": cls.get_supported_parallelism()
+        })
+
+    return {"layers": layers_out}
+
+
+def compute_phase_metrics(phase_req: PhaseMetricsRequest, phase: Phase) -> dict:
+    """
+    Helper function: Compute metrics for a single phase (prefill or decode).
+    
+    Args:
+        phase_req: Phase-specific request with layer configurations
+        phase: Phase enum (PREFILL or DECODE)
         
-        # Group layers by type
-        layer_info = {}
-        for layer in model_ir.layers:
-            layer_type = layer.module_type
-            if layer_type not in layer_info:
-                layer_info[layer_type] = {
-                    "type": layer_type,
-                    "count": 0,
-                    "sample_layer": {
-                        "name": layer.name,
-                        "input_dim": layer.input_dim,
-                        "output_dim": layer.output_dim,
-                    },
-                    "available_parallelism": []
-                }
-            layer_info[layer_type]["count"] += 1
-        
-        # Add available parallelism strategies per layer type
-        for layer_type in layer_info:
-            if layer_type == "attention":
-                layer_info[layer_type]["available_parallelism"] = ["tensor_parallel", "context_parallel"]
-            elif layer_type == "feedforward":
-                layer_info[layer_type]["available_parallelism"] = ["tensor_parallel", "sequence_parallel"]
-            elif layer_type == "norm":
-                layer_info[layer_type]["available_parallelism"] = []  # replicated
-            elif layer_type == "embedding":
-                layer_info[layer_type]["available_parallelism"] = []  # replicated
-            
-            # All layers support dtype selection
-            layer_info[layer_type]["available_dtypes"] = ["fp32", "fp16", "bf16", "fp8", "int8"]
-        
-        return {"layers": list(layer_info.values())}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-class LayerParallelismRequest(BaseModel):
-    layer_type: str
-    tensor_parallel: int = 1
-    context_parallel: int = 1
-    sequence_parallel: int = 1
-
-
-@app.post("/config/layer-parallelism")
-def configure_layer_parallelism(req: LayerParallelismRequest):
+    Returns:
+        Dict with aggregated phase metrics
     """
-    Step 3: Configure parallelism for a specific layer type.
-    """
-    try:
-        config_service.configure_layer_parallelism(
-            layer_type=req.layer_type,
-            tensor_parallel=req.tensor_parallel,
-            context_parallel=req.context_parallel,
-            sequence_parallel=req.sequence_parallel
+
+    # Load model and hardware config
+    model_cfg = load_model_config(phase_req.model_id)
+    hardware_cfg = load_hardware_config(phase_req.hardware_id)
+
+    total_weight_memory_gb = 0.0
+    total_activation_memory_gb = 0.0
+    total_kv_cache_gb = 0.0
+    compute_time_ms = 0.0
+    memory_time_ms = 0.0
+    max_packages = 1
+
+    for layer_name, config in phase_req.layers.items():
+        # Find layer definition in model config
+        layer_type = next((lt for lt in model_cfg['layer_types'] if lt['name'] == layer_name), None)
+        if not layer_type:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Layer '{layer_name}' not found in model config"
+            )
+
+        # Resolve and instantiate layer
+        layer_class = _resolve_layer_class(layer_type['class'])
+        parallelism = {p: config.get(p, 1) for p in layer_class.get_supported_parallelism()}
+        dtype_enum = DataType(config.get("dtype", "bf16").lower())
+        layer = _construct_layer(layer_class, layer_type["specs"], dtype_enum, parallelism)
+
+        num_instances = layer_type.get("count", 1)
+
+        # Hardware characteristics per package
+        hbm_memory = next((m for m in hardware_cfg['memory'] if 'HBM' in m['type']), hardware_cfg['memory'][0])
+        hbm_bw_per_package = hbm_memory['bandwidth_gbps']
+        assert dtype_enum.value in hardware_cfg['compute_per_package_GFlops'], f"Hardware missing compute spec for dtype {dtype_enum.value}"
+        peak_gflops_per_package = hardware_cfg['compute_per_package_GFlops'][dtype_enum.value]
+
+        # Compute metrics for this phase
+        m = layer.compute_metrics(
+            batch_size=phase_req.batch_size,
+            seq_len=phase_req.seq_len,
+            phase=phase,
         )
-        
-        config = config_service.get_layer_config(req.layer_type)
-        
-        return {
-            "layer_type": req.layer_type,
-            "config": {
-                "parallelism": config.parallelism,
-                "num_instances": config.num_instances,
-            }
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        max_packages = max(max_packages, m.num_packages)
+        total_weight_memory_gb += (m.weight_memory_per_package * num_instances) / 1e9
+        total_activation_memory_gb += (m.activation_memory_per_package * num_instances) / 1e9
+        total_kv_cache_gb += (m.kv_cache_per_package * num_instances) / 1e9
 
+        # Total compute available = peak per package * number of packages in use
+        total_peak_gflops = peak_gflops_per_package * m.num_packages
+        compute_time_ms += ((m.flops_per_package * num_instances) / 1e9) / total_peak_gflops * 1000
+        memory_time_ms += ((m.weight_memory_per_package * num_instances) / 1e9) / hbm_bw_per_package * 1000
 
-class LayerMetricsRequest(BaseModel):
-    """Stateless request for layer metrics - includes all necessary context."""
-    model_id: str
-    hardware_config: str
-    layer_type: str
-    batch_size: int = 1
-    seq_length: int = 2048
-    dtype: str = "bf16"
-    tensor_parallel: int = 1
-    context_parallel: int = 1
-    sequence_parallel: int = 1
-
-
-@app.post("/config/layer-metrics")
-def compute_layer_metrics(req: LayerMetricsRequest):
-    """
-    Stateless endpoint: Compute metrics for a specific layer type.
-    Builds ModelIR and hardware on-the-fly from request.
-    """
-    try:
-        from .layers import Phase, DataType
-        
-        # Load pre-validated model config
-        model_ir = load_model_config(req.model_id)
-        hardware = load_hardware_config(req.hardware_config)
-        
-        # Find a representative layer of this type
-        sample_layer_spec = next(
-            (l for l in model_ir.layers if l.module_type == req.layer_type),
-            None
-        )
-        if not sample_layer_spec:
-            raise HTTPException(status_code=404, detail=f"No layers of type {req.layer_type} found")
-        
-        # Build parallelism config from request
-        parallelism = {
-            "tensor_parallel": req.tensor_parallel,
-            "context_parallel": req.context_parallel,
-            "sequence_parallel": req.sequence_parallel,
-        }
-        
-        # Instantiate the layer
-        layer = ConfigurationService._instantiate_layer_static(
-            sample_layer_spec, parallelism, model_ir, hardware
-        )
-        if not layer:
-            raise HTTPException(status_code=500, detail="Failed to instantiate layer")
-        
-        # Compute metrics
-        try:
-            dtype_enum = DataType[req.dtype.upper()]
-        except KeyError:
-            raise HTTPException(status_code=400, detail=f"Invalid dtype: {req.dtype}")
-        
-        metrics = layer.compute_metrics(
-            batch_size=req.batch_size,
-            seq_len=req.seq_length,
-            phase=Phase.PREFILL,
-            dtype=dtype_enum
-        )
-        
-        # Count instances of this layer type
-        num_instances = sum(
-            1 for l in model_ir.layers 
-            if l.module_type == req.layer_type
-        )
-        
-        # Calculate aggregate for all instances of this layer
-        total_weight_memory_gb = (metrics.weight_memory_per_chip * num_instances) / 1e9
-        total_activation_memory_gb = (metrics.activation_memory_per_chip * num_instances) / 1e9
-        total_kv_cache_gb = (metrics.kv_cache_per_chip * num_instances) / 1e9
-        total_flops_tflops = (metrics.flops_per_chip * num_instances) / 1e12
-        
-        # Calculate bottleneck percentages
-        compute_time = total_flops_tflops / hardware.bf16_tflops
-        memory_time = total_weight_memory_gb / (hardware.hbm_bandwidth_gbps / 1000.0)
-        comm_time = 0.001  # Simplified for now
-        total_time = compute_time + memory_time + comm_time
-        
-        return {
-            "layer_type": req.layer_type,
-            "num_instances": num_instances,
-            "num_chips": metrics.num_chips,
-            "parallelism": parallelism,
-            "memory": {
-                "weights_per_chip_gb": metrics.weight_memory_per_chip / 1e9,
-                "activation_per_chip_gb": metrics.activation_memory_per_chip / 1e9,
-                "kv_cache_per_chip_gb": metrics.kv_cache_per_chip / 1e9,
-                "total_weights_gb": total_weight_memory_gb,
-                "total_activation_gb": total_activation_memory_gb,
-                "total_kv_cache_gb": total_kv_cache_gb,
-            },
-            "compute": {
-                "flops_per_chip_tflops": metrics.flops_per_chip / 1e12,
-                "total_flops_tflops": total_flops_tflops,
-            },
-            "bottleneck": {
-                "compute_percent": (compute_time / total_time * 100) if total_time > 0 else 0,
-                "memory_percent": (memory_time / total_time * 100) if total_time > 0 else 0,
-                "comm_percent": (comm_time / total_time * 100) if total_time > 0 else 0,
-            }
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-class SystemRequirementsRequest(BaseModel):
-    batch_size: int = 1
-    seq_length: int = 2048
-
-
-@app.post("/config/system-requirements")
-def calculate_system_requirements(req: SystemRequirementsRequest):
-    """
-    Step 4: Calculate minimum system requirements.
-    """
-    try:
-        from .layers import Phase, DataType
-        
-        requirements = config_service.calculate_minimum_system(
-            batch_size=req.batch_size,
-            seq_length=req.seq_length,
-            phase=Phase.PREFILL,
-            dtype=DataType.BF16
-        )
-        
-        return {
-            "min_chips": requirements.min_chips,
-            "total_weight_memory_gb": requirements.total_weight_memory_gb,
-            "total_activation_memory_gb": requirements.total_activation_memory_gb,
-            "total_kv_cache_gb": requirements.total_kv_cache_gb,
-            "memory_per_chip_gb": requirements.memory_per_chip_gb,
-            "fits_on_hardware": requirements.fits_on_hardware,
-            "hw_capacity_gb": requirements.hw_capacity_gb,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-class SystemMetricsRequest(BaseModel):
-    """Stateless request for system metrics - includes all necessary context."""
-    model_id: str
-    hardware_config: str
-    batch_size: int = 1
-    input_seq: int = 2048
-    output_seq: int = 128
-    # Layer configurations with parallelism and dtype
-    layers: Dict[str, Dict[str, Any]] = {}
-    # Example: {
-    #   "attention": {"tensor_parallel": 4, "context_parallel": 2, "dtype": "bf16"},
-    #   "feedforward": {"tensor_parallel": 8, "sequence_parallel": 1, "dtype": "bf16"}
-    # }
+    return {
+        "total_weight_memory_gb": total_weight_memory_gb,
+        "total_activation_memory_gb": total_activation_memory_gb,
+        "total_kv_cache_gb": total_kv_cache_gb,
+        "compute_time_ms": compute_time_ms,
+        "memory_time_ms": memory_time_ms,
+        "max_packages": max_packages,
+    }
 
 
 @app.post("/config/system-metrics")
-def compute_system_metrics(req: SystemMetricsRequest):
+def compute_system_metrics(prefill_req: PhaseMetricsRequest, decode_req: PhaseMetricsRequest):
     """
     Stateless endpoint: Compute full system-level metrics.
-    Builds ModelIR and hardware on-the-fly from request.
-    """
-    try:
-        from .layers import DataType
-        
-        # Load pre-validated model config and hardware
-        model_ir = load_model_config(req.model_id)
-        hardware = load_hardware_config(req.hardware_config)
-        
-        # Build layer configs from request
-        layer_configs = {}
-        for layer_type, config in req.layers.items():
-            # Count instances of this layer type
-            num_instances = sum(
-                1 for layer in model_ir.layers 
-                if layer.module_type == layer_type
-            )
-            
-            from .config_service import LayerConfig
-            layer_configs[layer_type] = LayerConfig(
-                layer_type=layer_type,
-                layer_name=layer_type,
-                parallelism={
-                    "tensor_parallel": config.get("tensor_parallel", 1),
-                    "context_parallel": config.get("context_parallel", 1),
-                    "sequence_parallel": config.get("sequence_parallel", 1),
-                },
-                num_instances=num_instances,
-                dtype=config.get("dtype", "bf16")
-            )
-        
-        # Compute metrics using static method
-        metrics = ConfigurationService.compute_system_metrics_static(
-            model_ir=model_ir,
-            hardware=hardware,
-            layer_configs=layer_configs,
-            batch_size=req.batch_size,
-            input_seq=req.input_seq,
-            output_seq=req.output_seq,
-            dtype=DataType.BF16
-        )
-        
-        return metrics
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ============================================================
-# DEPLOYMENT API: Given a full deployment config, return metrics
-# ============================================================
-
-class DeploymentConfig(BaseModel):
-    """Complete deployment configuration."""
-    model_id: str
-    hardware_config: str
-    batch_size: int = 1
-    input_seq: int = 2048
-    output_seq: int = 128
-    layer_parallelism: Dict[str, Dict[str, int]] = {}
-    # Example: {
-    #   "attention": {"tensor_parallel": 4, "context_parallel": 2},
-    #   "feedforward": {"tensor_parallel": 8, "sequence_parallel": 1}
-    # }
-
-
-@app.post("/deployment/estimate")
-def estimate_deployment(config: DeploymentConfig):
-    """
-    Comprehensive API: Given a complete deployment configuration,
-    return all performance metrics.
+    Takes separate requests for prefill and decode phases.
     
-    This is the main API endpoint for querying deployment performance.
-    It handles the full flow: load model + hardware → configure parallelism → compute metrics.
+    Args:
+        prefill_req: Configuration for prefill phase (prompt processing, seq_len = input prompt length)
+        decode_req: Configuration for decode phase (token generation, seq_len = number of output tokens)
     """
-    try:
-        # Create a fresh service instance for this request
-        service = ConfigurationService()
-        
-        # Step 1: Load model and hardware
-        service.load_hardware(config.hardware_config)
-        service.load_model(config.model_id)
-        
-        # Step 2: Validate
-        validation = service.validate_model()
-        if not validation.valid:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Model validation failed: {validation.issues}"
-            )
-        
-        # Step 3: Configure parallelism for each layer type
-        if config.layer_parallelism:
-            for layer_type, parallelism in config.layer_parallelism.items():
-                service.configure_layer_parallelism(
-                    layer_type=layer_type,
-                    tensor_parallel=parallelism.get("tensor_parallel", 1),
-                    context_parallel=parallelism.get("context_parallel", 1),
-                    sequence_parallel=parallelism.get("sequence_parallel", 1)
-                )
-        else:
-            # Default: no parallelism
-            for layer_type in service.get_layer_types():
-                service.configure_layer_parallelism(layer_type=layer_type)
-        
-        # Step 4: Calculate system requirements
-        from .layers import Phase, DataType
-        requirements = service.calculate_minimum_system(
-            batch_size=config.batch_size,
-            seq_length=config.input_seq,
-            phase=Phase.PREFILL,
-            dtype=DataType.BF16
-        )
-        
-        # Step 5: Compute full metrics
-        metrics = service.compute_system_metrics(
-            batch_size=config.batch_size,
-            input_seq=config.input_seq,
-            output_seq=config.output_seq,
-            dtype=DataType.BF16
-        )
-        
-        # Return comprehensive result
-        return {
-            "deployment": {
-                "model_id": config.model_id,
-                "hardware_config": config.hardware_config,
-                "batch_size": config.batch_size,
-                "input_seq": config.input_seq,
-                "output_seq": config.output_seq,
-            },
-            "validation": {
-                "total_params": validation.total_params,
-                "num_layers": validation.num_layers,
-                "attention_type": validation.attention_type,
-                "mlp_type": validation.mlp_type,
-            },
-            "requirements": {
-                "min_chips": requirements.min_chips,
-                "memory_per_chip_gb": requirements.memory_per_chip_gb,
-                "fits_on_hardware": requirements.fits_on_hardware,
-            },
-            "performance": metrics,
-        }
+    # Load pre-validated model config and hardware (use prefill_req as source)
+    model_cfg = load_model_config(prefill_req.model_id)
+    hardware_cfg = load_hardware_config(prefill_req.hardware_id)
+
+    # Compute metrics for prefill phase
+    prefill_metrics = compute_phase_metrics(prefill_req, Phase.PREFILL)
     
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Estimation failed: {str(e)}")
+    # Compute metrics for decode phase
+    decode_metrics = compute_phase_metrics(decode_req, Phase.DECODE)
 
+    # Aggregate system-level metrics
+    max_packages = max(prefill_metrics["max_packages"], decode_metrics["max_packages"])
+    
+    # Use prefill memory totals (weights/activations/kv are same for both phases)
+    total_weight_memory_gb = prefill_metrics["total_weight_memory_gb"]
+    total_activation_memory_gb = prefill_metrics["total_activation_memory_gb"]
+    total_kv_cache_gb = prefill_metrics["total_kv_cache_gb"]
 
-# ============================================================
-# EXISTING ENDPOINT: Original Estimation Flow
-# ============================================================
+    # Derive latencies
+    ttft_ms = max(prefill_metrics["compute_time_ms"], prefill_metrics["memory_time_ms"])
+    tpot_ms = max(decode_metrics["compute_time_ms"], decode_metrics["memory_time_ms"])
+    
+    # TPS/User is the per-user token generation rate (independent of batch size)
+    tps_user = 1000.0 / tpot_ms if tpot_ms > 0 else 0.0
+    
+    # System throughput is the total tokens/sec across all users in the batch
+    # Use decode batch size since throughput is determined by decode phase
+    throughput_tokens_s = tps_user * decode_req.batch_size
+    
+    total_latency_ms = ttft_ms + (tpot_ms * decode_req.seq_len)
 
-@app.post("/estimate")
-def run_estimation(req: EstimateRequest):
-    # 1. Load Hardware
-    if req.hardware_preset == "nvl72_rack":
-        hw = get_nvl72_rack_specs()
-    elif req.hardware_preset == "nvl72_single":
-        hw = get_nvl72_specs()
+    # Bottleneck analysis
+    if prefill_metrics["compute_time_ms"] > prefill_metrics["memory_time_ms"] * 1.2:
+        bottleneck = "compute"
+    elif prefill_metrics["memory_time_ms"] > prefill_metrics["compute_time_ms"] * 1.2:
+        bottleneck = "memory"
     else:
-        raise HTTPException(status_code=404, detail="Hardware preset not found")
+        bottleneck = "balanced"
 
-    # 2. Load Model Config
-    try:
-        # Load pre-validated model config
-        ir = load_model_config(req.model_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load model: {str(e)}")
-        
-    # 3. Parallel Config
-    par = ParallelismConfig(
-        tp_size=req.tp_size,
-        batch_size=req.batch_size,
-        input_seq_len=req.input_seq,
-        output_seq_len=req.output_seq
-    )
+    # Memory per package and capacity check
+    memory_per_package_gb = (
+        total_weight_memory_gb + total_activation_memory_gb + total_kv_cache_gb
+    ) / max_packages if max_packages > 0 else 0.0
     
-    # 4. Estimate
-    result = estimate_performance(hw, ir, par)
+    hbm_memory = next((m for m in hardware_cfg['memory'] if 'HBM' in m['type']), hardware_cfg['memory'][0])
+    hw_capacity_gb = hbm_memory['capacity_gb']
+    fits_on_hardware = memory_per_package_gb <= hw_capacity_gb
     
-    return result
+    # Power and TCO metrics (scaled by number of packages)
+    power_kw = hardware_cfg.get('power_kw', 0.0) * max_packages
+    tco_sec_usd = hardware_cfg.get('tco_sec_usd', 0.0) * max_packages
+    
+    # MFU placeholder (TODO: compute at layer level)
+    mfu = 0.37
+
+    return {
+        "ttft_ms": ttft_ms,
+        "tpot_ms": tpot_ms,
+        "tps_user": tps_user,
+        "throughput_tokens_s": throughput_tokens_s,
+        "total_latency_ms": total_latency_ms,
+        "memory": {
+            "weight_memory_gb": total_weight_memory_gb,
+            "activation_memory_gb": total_activation_memory_gb,
+            "kv_cache_gb": total_kv_cache_gb,
+            "memory_per_package_gb": memory_per_package_gb,
+            "hw_capacity_gb": hw_capacity_gb,
+        },
+        "system": {
+            "num_packages": max_packages,
+            "power_kw": power_kw,
+            "mfu": mfu,
+            "tco_sec_usd": tco_sec_usd,
+            "bottleneck": bottleneck,
+            "fits_on_hardware": fits_on_hardware,
+        },
+    }
+

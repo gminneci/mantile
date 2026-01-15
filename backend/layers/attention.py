@@ -42,6 +42,7 @@ class AttentionLayer(Layer):
         hidden_size: int,
         num_heads: int,
         head_dim: int,
+        dtype: DataType | str,
         parallelism: Optional[dict] = None
     ):
         """
@@ -50,6 +51,7 @@ class AttentionLayer(Layer):
             hidden_size: Model hidden dimension
             num_heads: Number of attention heads
             head_dim: Dimension per head (typically hidden_size // num_heads)
+            dtype: Numerical precision (DataType enum or string like 'bf16')
             parallelism: Parallelism config (see Layer base class)
         """
         self.hidden_size = hidden_size
@@ -57,7 +59,7 @@ class AttentionLayer(Layer):
         self.head_dim = head_dim
         # Q, K, V, O projections (all same size for vanilla MHA)
         self.param_count = 4 * hidden_size * hidden_size
-        super().__init__(layer_idx, parallelism)
+        super().__init__(layer_idx, dtype, parallelism)
     
     def _validate_parallelism(self) -> None:
         """MHA supports head-parallel TP with divisibility constraint"""
@@ -70,12 +72,12 @@ class AttentionLayer(Layer):
             if self.num_heads % tp != 0:
                 raise ValueError(f"num_heads ({self.num_heads}) must be divisible by TP degree ({tp})")
     
-    def _get_num_chips(self) -> int:
+    def _get_num_packages(self) -> int:
         tp = self.parallelism.get("tensor_parallel", 1)
         cp = self.parallelism.get("context_parallel", 1)
         return tp * cp
 
-    def compute_flops(self, batch_size: int, seq_len: int, phase: Phase, dtype: DataType) -> int:
+    def compute_flops(self, batch_size: int, seq_len: int, phase: Phase) -> int:
         """
         FLOPs per chip for MHA:
         - Projections: Q,K,V,O with per-chip sizing by TP and CP
@@ -121,13 +123,13 @@ class AttentionLayer(Layer):
             flops += 2 * B * h_per * S_local * S * d  # Attn * V (S_local × S)
         return int(flops)
     
-    def compute_weight_memory(self, dtype: DataType) -> int:
+    def compute_weight_memory(self) -> int:
         # Weight memory per chip: TP shards weights, CP replicates them
         tp = self.parallelism.get("tensor_parallel", 1)
         params_per_chip = self.param_count // tp
-        return int(params_per_chip * dtype.bytes_per_element)
+        return int(params_per_chip * self.dtype.bytes_per_element)
 
-    def compute_activation_memory(self, batch_size: int, seq_len: int, phase: Phase, dtype: DataType) -> int:
+    def compute_activation_memory(self, batch_size: int, seq_len: int, phase: Phase) -> int:
         """
         Approximate peak activations per chip (not counting attention score matrix).
         Most implementations tile/stream the attention scores, so we only count:
@@ -165,9 +167,9 @@ class AttentionLayer(Layer):
             elems += 3 * M_local * d_local
             # Output Y_local: M_local × d
             elems += M_local * H
-        return int(elems * dtype.bytes_per_element)
+        return int(elems * self.dtype.bytes_per_element)
 
-    def compute_kv_cache(self, batch_size: int, seq_len: int, dtype: DataType) -> int:
+    def compute_kv_cache(self, batch_size: int, seq_len: int) -> int:
         # KV cache per chip with TP (head) and CP (sequence) sharding
         # Note: This is called by base class without phase info.
         # For decode with phase info, use _compute_kv_cache_with_phase()
@@ -176,9 +178,9 @@ class AttentionLayer(Layer):
         h_per = self.num_heads // tp
         seq_local = seq_len // cp
         elements = 2 * batch_size * h_per * seq_local * self.head_dim
-        return int(elements * dtype.bytes_per_element)
+        return int(elements * self.dtype.bytes_per_element)
     
-    def _compute_kv_cache_with_phase(self, batch_size: int, seq_len: int, phase: Phase, dtype: DataType) -> int:
+    def _compute_kv_cache_with_phase(self, batch_size: int, seq_len: int, phase: Phase) -> int:
         """
         Compute KV cache with phase awareness and CP sharding.
         - Prefill: cache size = seq_len/cp per chip (sharded by CP)
@@ -196,14 +198,13 @@ class AttentionLayer(Layer):
             cache_len_local = (seq_len + 1) // cp
         
         elements = 2 * batch_size * h_per * cache_len_local * self.head_dim
-        return int(elements * dtype.bytes_per_element)
+        return int(elements * self.dtype.bytes_per_element)
 
     def _compute_communication_bytes(
         self,
         batch_size: int,
         seq_len: int,
         phase: Phase,
-        dtype: DataType,
         hardware: dict
     ) -> Optional[int]:
         """
@@ -220,7 +221,7 @@ class AttentionLayer(Layer):
         # TP communication: All-reduce on attention output
         if tp > 1:
             tokens_this_step = 1 if phase == Phase.DECODE else seq_len // cp  # Local tokens
-            tp_comm = batch_size * tokens_this_step * self.hidden_size * dtype.bytes_per_element
+            tp_comm = batch_size * tokens_this_step * self.hidden_size * self.dtype.bytes_per_element
             total_comm += tp_comm
         
         # CP communication: Softmax stats + output reduction
@@ -241,7 +242,7 @@ class AttentionLayer(Layer):
             # (b) Output vector reduction: sum partial outputs
             # Shape: [num_queries, d/tp] if TP, else [num_queries, d]
             output_width = self.hidden_size // tp if tp > 1 else self.hidden_size
-            output_comm = num_queries * output_width * dtype.bytes_per_element
+            output_comm = num_queries * output_width * self.dtype.bytes_per_element
             
             cp_comm = stats_comm + output_comm
             total_comm += cp_comm
@@ -253,29 +254,26 @@ class AttentionLayer(Layer):
         batch_size: int,
         seq_len: int,
         phase: Phase | str,
-        dtype: DataType | str,
         hardware: Optional[dict] = None
     ):
         """Override to use phase-aware KV cache calculation"""
-        # Convert string inputs to enums
+        # Convert string input to enum
         if isinstance(phase, str):
             phase = Phase(phase)
-        if isinstance(dtype, str):
-            dtype = DataType(dtype)
         
         # Call parent's compute_metrics
-        metrics = super().compute_metrics(batch_size, seq_len, phase, dtype, hardware)
+        metrics = super().compute_metrics(batch_size, seq_len, phase, hardware)
         
         # Replace KV cache with phase-aware version
-        kv_cache_per_chip = self._compute_kv_cache_with_phase(batch_size, seq_len, phase, dtype)
-        num_chips = self._get_num_chips()
+        kv_cache_per_package = self._compute_kv_cache_with_phase(batch_size, seq_len, phase)
+        num_packages = self._get_num_packages()
         
         # Create new metrics with updated KV cache
         from dataclasses import replace
         return replace(
             metrics,
-            kv_cache_per_chip=kv_cache_per_chip,
-            kv_cache_total=kv_cache_per_chip * num_chips
+            kv_cache_per_package=kv_cache_per_package,
+            kv_cache_total=kv_cache_per_package * num_packages
         )
 
 
@@ -310,6 +308,7 @@ class GroupedQueryAttentionLayer(Layer):
         num_heads: int,
         num_kv_heads: int,
         head_dim: int,
+        dtype: DataType | str,
         parallelism: Optional[dict] = None
     ):
         """
@@ -319,6 +318,7 @@ class GroupedQueryAttentionLayer(Layer):
             num_heads: Number of query heads
             num_kv_heads: Number of key/value heads (num_heads for MHA, 1 for MQA)
             head_dim: Dimension per head
+            dtype: Numerical precision (DataType enum or string like 'bf16')
             parallelism: Parallelism config (see Layer base class)
         """
         self.hidden_size = hidden_size
@@ -333,7 +333,7 @@ class GroupedQueryAttentionLayer(Layer):
         o_params = hidden_size * hidden_size
         self.param_count = q_params + k_params + v_params + o_params
         
-        super().__init__(layer_idx, parallelism)
+        super().__init__(layer_idx, dtype, parallelism)
     
     def _validate_parallelism(self) -> None:
         """GQA supports head-parallel TP with divisibility constraints"""
@@ -348,12 +348,12 @@ class GroupedQueryAttentionLayer(Layer):
             if self.num_kv_heads % tp != 0:
                 raise ValueError(f"num_kv_heads ({self.num_kv_heads}) must be divisible by TP degree ({tp})")
     
-    def _get_num_chips(self) -> int:
+    def _get_num_packages(self) -> int:
         tp = self.parallelism.get("tensor_parallel", 1)
         cp = self.parallelism.get("context_parallel", 1)
         return tp * cp
 
-    def compute_flops(self, batch_size: int, seq_len: int, phase: Phase, dtype: DataType) -> int:
+    def compute_flops(self, batch_size: int, seq_len: int, phase: Phase) -> int:
         """
         FLOPs per chip for GQA:
         - Q projection uses full hidden; per chip output is H/tp
@@ -405,12 +405,12 @@ class GroupedQueryAttentionLayer(Layer):
             
         return int(flops)
     
-    def compute_weight_memory(self, dtype: DataType) -> int:
+    def compute_weight_memory(self) -> int:
         """Weight memory per chip with TP sharding, CP replication"""
         tp = self.parallelism.get("tensor_parallel", 1)
-        return int((self.param_count // tp) * dtype.bytes_per_element)
+        return int((self.param_count // tp) * self.dtype.bytes_per_element)
 
-    def compute_activation_memory(self, batch_size: int, seq_len: int, phase: Phase, dtype: DataType) -> int:
+    def compute_activation_memory(self, batch_size: int, seq_len: int, phase: Phase) -> int:
         """
         Activation memory per chip for GQA.
         Counts: input X, Q/K/V projections, output Y (local tokens for CP).
@@ -453,18 +453,18 @@ class GroupedQueryAttentionLayer(Layer):
             # Output Y_local: M_local × d
             elems += M_local * H
             
-        return int(elems * dtype.bytes_per_element)
+        return int(elems * self.dtype.bytes_per_element)
 
-    def compute_kv_cache(self, batch_size: int, seq_len: int, dtype: DataType) -> int:
+    def compute_kv_cache(self, batch_size: int, seq_len: int) -> int:
         """KV cache per chip with TP (head) and CP (sequence) sharding"""
         tp = self.parallelism.get("tensor_parallel", 1)
         cp = self.parallelism.get("context_parallel", 1)
         kv_per = self.num_kv_heads // tp
         seq_local = seq_len // cp
         elements = 2 * batch_size * kv_per * seq_local * self.head_dim
-        return int(elements * dtype.bytes_per_element)
+        return int(elements * self.dtype.bytes_per_element)
     
-    def _compute_kv_cache_with_phase(self, batch_size: int, seq_len: int, phase: Phase, dtype: DataType) -> int:
+    def _compute_kv_cache_with_phase(self, batch_size: int, seq_len: int, phase: Phase) -> int:
         """Phase-aware KV cache calculation for GQA"""
         tp = self.parallelism.get("tensor_parallel", 1)
         cp = self.parallelism.get("context_parallel", 1)
@@ -480,14 +480,13 @@ class GroupedQueryAttentionLayer(Layer):
         # Shard by CP
         cache_len_local = cache_len // cp
         elements = 2 * batch_size * kv_per * cache_len_local * self.head_dim
-        return int(elements * dtype.bytes_per_element)
+        return int(elements * self.dtype.bytes_per_element)
 
     def _compute_communication_bytes(
         self,
         batch_size: int,
         seq_len: int,
         phase: Phase,
-        dtype: DataType,
         hardware: dict
     ) -> Optional[int]:
         """Communication for both TP and CP in GQA"""
@@ -502,7 +501,7 @@ class GroupedQueryAttentionLayer(Layer):
                 tokens_this_step = 1  # Single new token
             else:  # PREFILL
                 tokens_this_step = seq_len // cp  # Local tokens
-            tp_comm = batch_size * tokens_this_step * self.hidden_size * dtype.bytes_per_element
+            tp_comm = batch_size * tokens_this_step * self.hidden_size * self.dtype.bytes_per_element
             total_comm += tp_comm
         
         # CP communication: Softmax stats + output reduction
@@ -520,7 +519,7 @@ class GroupedQueryAttentionLayer(Layer):
             
             # (b) Output vector reduction
             output_width = self.hidden_size // tp if tp > 1 else self.hidden_size
-            output_comm = num_queries * output_width * dtype.bytes_per_element
+            output_comm = num_queries * output_width * self.dtype.bytes_per_element
             
             cp_comm = stats_comm + output_comm
             total_comm += cp_comm
@@ -532,27 +531,24 @@ class GroupedQueryAttentionLayer(Layer):
         batch_size: int,
         seq_len: int,
         phase: Phase | str,
-        dtype: DataType | str,
         hardware: Optional[dict] = None
     ):
         """Override to use phase-aware KV cache calculation"""
         # Convert string inputs to enums
         if isinstance(phase, str):
             phase = Phase(phase)
-        if isinstance(dtype, str):
-            dtype = DataType(dtype)
         
         # Call parent's compute_metrics
-        metrics = super().compute_metrics(batch_size, seq_len, phase, dtype, hardware)
+        metrics = super().compute_metrics(batch_size, seq_len, phase, hardware)
         
         # Replace KV cache with phase-aware version
-        kv_cache_per_chip = self._compute_kv_cache_with_phase(batch_size, seq_len, phase, dtype)
-        num_chips = self._get_num_chips()
+        kv_cache_per_package = self._compute_kv_cache_with_phase(batch_size, seq_len, phase)
+        num_packages = self._get_num_packages()
         
         # Create new metrics with updated KV cache
         from dataclasses import replace
         return replace(
             metrics,
-            kv_cache_per_chip=kv_cache_per_chip,
-            kv_cache_total=kv_cache_per_chip * num_chips
+            kv_cache_per_package=kv_cache_per_package,
+            kv_cache_total=kv_cache_per_package * num_packages
         )

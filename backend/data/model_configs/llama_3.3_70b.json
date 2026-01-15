@@ -10,8 +10,9 @@
   "layer_types": [
     {
       "name": "attention",
-      "class": "GroupedQueryAttention",
+      "class": "GroupedQueryAttentionLayer",
       "count": 80,
+      
       "specs": {
         "layer_idx": 0,
         "input_dim": 8192,
@@ -25,7 +26,7 @@
     },
     {
       "name": "feedforward",
-      "class": "SwiGLUFeedForward",
+      "class": "GatedMLPLayer",
       "count": 80,
       "specs": {
         "layer_idx": 0,

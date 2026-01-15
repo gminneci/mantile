@@ -73,26 +73,8 @@ def get_all_configs() -> Dict[str, HardwareSpecs]:
     for config_name in list_available_configs():
         try:
             configs[config_name] = load_hardware_config(config_name)
-        except Exception as e:
-            print(f"Warning: Failed to load config '{config_name}': {e}")
+        except Exception:
+            # Silently skip failed configs
+            pass
     
     return configs
-
-
-# Backward compatibility functions
-def get_nvl72_specs() -> HardwareSpecs:
-    """
-    Returns the hardware specifications for a SINGLE GB200 package.
-    
-    DEPRECATED: Use load_hardware_config("nvidia_gb200_single") instead.
-    """
-    return load_hardware_config("nvidia_gb200_single")
-
-
-def get_nvl72_rack_specs() -> HardwareSpecs:
-    """
-    Returns the specs for the FULL NVL-72 Rack.
-    
-    DEPRECATED: Use load_hardware_config("nvidia_nvl72_rack") instead.
-    """
-    return load_hardware_config("nvidia_nvl72_rack")

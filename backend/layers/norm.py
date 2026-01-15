@@ -38,6 +38,7 @@ class NormLayer(Layer):
         layer_idx: int,
         hidden_size: int,
         has_bias: bool = False,
+        dtype: DataType | str = "bf16",
         parallelism: Optional[dict] = None
     ):
         """
@@ -45,29 +46,30 @@ class NormLayer(Layer):
             layer_idx: Layer index
             hidden_size: Model hidden dimension
             has_bias: Whether LayerNorm has bias term (False for RMSNorm)
+            dtype: Numerical precision (DataType enum or string like 'bf16')
             parallelism: Parallelism config (see Layer base class)
         """
         self.hidden_size = hidden_size
         self.has_bias = has_bias
         self.param_count = hidden_size * (2 if has_bias else 1)
-        super().__init__(layer_idx, parallelism)
+        super().__init__(layer_idx, dtype, parallelism)
     
-    def _get_num_chips(self) -> int:
+    def _get_num_packages(self) -> int:
         return 1
     
-    def compute_flops(self, batch_size: int, seq_len: int, phase: Phase, dtype: DataType) -> int:
+    def compute_flops(self, batch_size: int, seq_len: int, phase: Phase) -> int:
         """
         Approximate LN/RMSNorm flops per chip: ~5 ops per element (mean/var, scale, bias).
         """
         B, S, H = batch_size, seq_len, self.hidden_size
         return int(5 * B * S * H)
     
-    def compute_weight_memory(self, dtype: DataType) -> int:
-        return int(self.param_count * dtype.bytes_per_element)
+    def compute_weight_memory(self) -> int:
+        return int(self.param_count * self.dtype.bytes_per_element)
     
-    def compute_activation_memory(self, batch_size: int, seq_len: int, phase: Phase, dtype: DataType) -> int:
+    def compute_activation_memory(self, batch_size: int, seq_len: int, phase: Phase) -> int:
         """
         Output tensor size dominates: B*S*H elements.
         """
         B, S, H = batch_size, seq_len, self.hidden_size
-        return int(B * S * H * dtype.bytes_per_element)
+        return int(B * S * H * self.dtype.bytes_per_element)

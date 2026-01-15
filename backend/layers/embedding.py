@@ -34,12 +34,14 @@ class EmbeddingLayer(Layer):
         self,
         vocab_size: int,
         hidden_size: int,
+        dtype: DataType | str = "bf16",
         parallelism: Optional[dict] = None
     ):
         """
         Args:
             vocab_size: Vocabulary size
             hidden_size: Model hidden dimension
+            dtype: Numerical precision (DataType enum or string like 'bf16')
             parallelism: Parallelism config (see Layer base class)
         """
         self.vocab_size = vocab_size
@@ -49,14 +51,14 @@ class EmbeddingLayer(Layer):
         self.param_count = vocab_size * hidden_size
         
         # Embeddings are typically layer_idx=-1 (before transformer layers)
-        super().__init__(layer_idx=-1, parallelism=parallelism)
+        super().__init__(layer_idx=-1, dtype=dtype, parallelism=parallelism)
     
-    def _get_num_chips(self) -> int:
+    def _get_num_packages(self) -> int:
         """Number of chips for embedding layer"""
         tp = self.parallelism.get("tensor_parallel", 1)
         return tp
     
-    def compute_flops(self, batch_size: int, seq_len: int, phase: Phase, dtype: DataType) -> int:
+    def compute_flops(self, batch_size: int, seq_len: int, phase: Phase) -> int:
         """
         FLOPs for embedding lookup.
         
@@ -67,7 +69,7 @@ class EmbeddingLayer(Layer):
         """
         return 0
     
-    def compute_weight_memory(self, dtype: DataType) -> int:
+    def compute_weight_memory(self) -> int:
         """
         Weight memory per chip for embedding table.
         
@@ -85,9 +87,9 @@ class EmbeddingLayer(Layer):
             # Replicate
             params_per_chip = self.param_count
         
-        return int(params_per_chip * dtype.bytes_per_element)
+        return int(params_per_chip * self.dtype.bytes_per_element)
     
-    def compute_activation_memory(self, batch_size: int, seq_len: int, phase: Phase, dtype: DataType) -> int:
+    def compute_activation_memory(self, batch_size: int, seq_len: int, phase: Phase) -> int:
         """
         Activation memory for embedding layer.
         
@@ -105,9 +107,9 @@ class EmbeddingLayer(Layer):
         
         # Output embeddings: [B, S, H]
         elements = B * S * H
-        return int(elements * dtype.bytes_per_element)
+        return int(elements * self.dtype.bytes_per_element)
     
-    def compute_kv_cache(self, batch_size: int, seq_len: int, dtype: DataType) -> int:
+    def compute_kv_cache(self, batch_size: int, seq_len: int) -> int:
         """Embedding layer has no KV cache"""
         return 0
     
@@ -116,7 +118,6 @@ class EmbeddingLayer(Layer):
         batch_size: int,
         seq_len: int,
         phase: Phase,
-        dtype: DataType,
         hardware: dict
     ) -> Optional[int]:
         """
@@ -134,7 +135,7 @@ class EmbeddingLayer(Layer):
             S = 1 if phase == Phase.DECODE else seq_len
             
             # All-reduce output: [B, S, H]
-            comm_bytes = B * S * H * dtype.bytes_per_element
+            comm_bytes = B * S * H * self.dtype.bytes_per_element
             return int(comm_bytes)
         
         return None

@@ -72,10 +72,6 @@ Example:
         dtype="bf16",
         hardware=h100_config
     )
-    
-    print(f"Per-chip FLOPs: {metrics.flops_per_chip}")
-    print(f"Total FLOPs: {metrics.flops_total}")
-    print(f"Communication: {metrics.communication_bytes} bytes")
 """
 
 # Base classes

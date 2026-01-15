@@ -1,0 +1,19 @@
+{
+  "name": "Test chip (64 cluster)",
+  "description": "Single chip used for testing purposes.",
+  "manufacturer": "Test Manufacturer",
+  "compute_per_package_GFlops": {
+    "fp16": 2500.0,
+    "bf16": 2500.0,
+    "fp8": 5000.0,
+    "int8": 5000.0
+  },
+  "memory": [
+    {"type": "SRAM", "capacity_gb": 0.25, "bandwidth_gbps": 65536.0},
+    {"type": "HBM", "capacity_gb": 192.0, "bandwidth_gbps": 8192.0}
+  ],
+  "interconnect_bandwidth_gbps": 900.0,
+  "interconnect_latency_us": 0.20,
+  "chips_per_node": 8,
+  "nodes_per_cluster": 8
+}
