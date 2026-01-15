@@ -72,7 +72,7 @@ class AttentionLayer(Layer):
             if self.num_heads % tp != 0:
                 raise ValueError(f"num_heads ({self.num_heads}) must be divisible by TP degree ({tp})")
     
-    def _get_num_chips(self) -> int:
+    def _get_num_packages(self) -> int:
         tp = self.parallelism.get("tensor_parallel", 1)
         cp = self.parallelism.get("context_parallel", 1)
         return tp * cp
@@ -265,15 +265,15 @@ class AttentionLayer(Layer):
         metrics = super().compute_metrics(batch_size, seq_len, phase, hardware)
         
         # Replace KV cache with phase-aware version
-        kv_cache_per_chip = self._compute_kv_cache_with_phase(batch_size, seq_len, phase)
-        num_chips = self._get_num_chips()
+        kv_cache_per_package = self._compute_kv_cache_with_phase(batch_size, seq_len, phase)
+        num_packages = self._get_num_packages()
         
         # Create new metrics with updated KV cache
         from dataclasses import replace
         return replace(
             metrics,
-            kv_cache_per_chip=kv_cache_per_chip,
-            kv_cache_total=kv_cache_per_chip * num_chips
+            kv_cache_per_package=kv_cache_per_package,
+            kv_cache_total=kv_cache_per_package * num_packages
         )
 
 
@@ -348,7 +348,7 @@ class GroupedQueryAttentionLayer(Layer):
             if self.num_kv_heads % tp != 0:
                 raise ValueError(f"num_kv_heads ({self.num_kv_heads}) must be divisible by TP degree ({tp})")
     
-    def _get_num_chips(self) -> int:
+    def _get_num_packages(self) -> int:
         tp = self.parallelism.get("tensor_parallel", 1)
         cp = self.parallelism.get("context_parallel", 1)
         return tp * cp
@@ -542,13 +542,13 @@ class GroupedQueryAttentionLayer(Layer):
         metrics = super().compute_metrics(batch_size, seq_len, phase, hardware)
         
         # Replace KV cache with phase-aware version
-        kv_cache_per_chip = self._compute_kv_cache_with_phase(batch_size, seq_len, phase)
-        num_chips = self._get_num_chips()
+        kv_cache_per_package = self._compute_kv_cache_with_phase(batch_size, seq_len, phase)
+        num_packages = self._get_num_packages()
         
         # Create new metrics with updated KV cache
         from dataclasses import replace
         return replace(
             metrics,
-            kv_cache_per_chip=kv_cache_per_chip,
-            kv_cache_total=kv_cache_per_chip * num_chips
+            kv_cache_per_package=kv_cache_per_package,
+            kv_cache_total=kv_cache_per_package * num_packages
         )

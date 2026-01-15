@@ -1,12 +1,38 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Activity, AlertCircle, Copy, CheckCircle2, Server, Cpu, Layers } from 'lucide-react';
+import { Activity, AlertCircle, Copy, CheckCircle2, Server, Cpu, Layers, ChevronUp, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import LayerConfigCard from './components/LayerConfigCard';
 import MetricsDisplay from './components/MetricsDisplay';
 
 // --- API Client ---
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+// Helper: Get next/previous power of 2
+const nextPowerOf2 = (n) => {
+  if (n <= 1) return 2;
+  // If n is already a power of 2, move to the next one
+  const log2n = Math.log2(n);
+  const isExactPowerOf2 = Number.isInteger(log2n);
+  return Math.pow(2, Math.ceil(log2n) + (isExactPowerOf2 ? 1 : 0));
+};
+
+const prevPowerOf2 = (n) => {
+  if (n <= 2) return 1;
+  // If n is already a power of 2, move to the previous one
+  const log2n = Math.log2(n);
+  const isExactPowerOf2 = Number.isInteger(log2n);
+  return Math.pow(2, Math.floor(log2n) - (isExactPowerOf2 ? 1 : 0));
+};
+
+// Helper: Format numbers with commas and 2 decimal places for floats
+const formatNumber = (num, decimals = 2) => {
+  if (num === null || num === undefined || isNaN(num)) return 'N/A';
+  const isFloat = !Number.isInteger(num);
+  const formatted = isFloat ? num.toFixed(decimals) : num.toString();
+  // Add comma separators
+  return formatted.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+};
 
 export default function App() {
   const [loading, setLoading] = useState(false);
@@ -35,9 +61,12 @@ export default function App() {
   const [metrics, setMetrics] = useState(null);
   
   // Available dtypes per hardware
-  const [availableDtypes, setAvailableDtypes] = useState(['bf16', 'fp16', 'fp8', 'int8']);
-  const [availableDtypesPrefill, setAvailableDtypesPrefill] = useState(['bf16', 'fp16', 'fp8', 'int8']);
-  const [availableDtypesDecode, setAvailableDtypesDecode] = useState(['bf16', 'fp16', 'fp8', 'int8']);
+  const [availableDtypes, setAvailableDtypes] = useState(['bf16', 'fp16', 'int8']);
+  const [availableDtypesPrefill, setAvailableDtypesPrefill] = useState(['bf16', 'fp16', 'int8']);
+  const [availableDtypesDecode, setAvailableDtypesDecode] = useState(['bf16', 'fp16', 'int8']);
+  
+  // Hardware configs for max parallelism calculation
+  const [hardwareConfigs, setHardwareConfigs] = useState({});
   
   // Comparison Mode
   const [comparisonMode, setComparisonMode] = useState(false);
@@ -60,11 +89,13 @@ export default function App() {
   // Helper: derive dtype list from hardware capabilities
   const deriveDtypes = (hw) => {
     const dtypes = [];
-    if (hw?.compute?.bf16) dtypes.push('bf16');
-    if (hw?.compute?.fp16) dtypes.push('fp16');
-    if (hw?.compute?.fp8) dtypes.push('fp8');
-    if (hw?.compute?.int8) dtypes.push('int8');
-    return dtypes.length ? dtypes : ['bf16', 'fp16', 'fp8', 'int8'];
+    if (hw?.compute_per_package_GFlops?.bf16) dtypes.push('bf16');
+    if (hw?.compute_per_package_GFlops?.fp16) dtypes.push('fp16');
+    if (hw?.compute_per_package_GFlops?.fp8) dtypes.push('fp8');
+    if (hw?.compute_per_package_GFlops?.nvfp8) dtypes.push('nvfp8');
+    if (hw?.compute_per_package_GFlops?.nvfp4) dtypes.push('nvfp4');
+    if (hw?.compute_per_package_GFlops?.int8) dtypes.push('int8');
+    return dtypes.length ? dtypes : ['bf16', 'fp16', 'int8'];
   };
 
   // Helper: Build API request from current config state
@@ -144,7 +175,7 @@ export default function App() {
 
       return {
         model_id: comparisonConfig.model,
-        hardware_config: phaseConfig.hardware,
+        hardware_id: phaseConfig.hardware,
         batch_size: Number(phaseConfig.batchSize),
         seq_len: Number(phaseConfig.seqLen),
         layers: layersDict
@@ -194,6 +225,9 @@ export default function App() {
       // Each type has: {prefill: {tp, cp, sp}, decode: {tp, cp, sp}, dtype}
       const defaultLayerConfigs = {};
       
+      // Get first available dtype from current hardware config, or default to bf16
+      const defaultDtype = availableDtypes.length > 0 ? availableDtypes[0] : 'bf16';
+      
       layersResponse.data.layers.forEach(layer => {
         defaultLayerConfigs[layer.name] = {
           prefill: {
@@ -206,7 +240,7 @@ export default function App() {
             cp_degree: 1,
             sp_degree: 1
           },
-          dtype: 'fp8' // Default to FP8
+          dtype: defaultDtype
         };
       });
       
@@ -235,22 +269,93 @@ export default function App() {
         // Load dtypes for prefill and decode hardware
         const resPrefill = await axios.get(`${API_URL}/hardware/${config.prefill.hardware}`);
         const resDecode = await axios.get(`${API_URL}/hardware/${config.decode.hardware}`);
+        
+        // Store hardware configs for max parallelism calculation
+        setHardwareConfigs(prev => ({
+          ...prev,
+          [config.prefill.hardware]: resPrefill.data,
+          [config.decode.hardware]: resDecode.data
+        }));
+        
         setAvailableDtypesPrefill(deriveDtypes(resPrefill.data));
         setAvailableDtypesDecode(deriveDtypes(resDecode.data));
         // Combined dtypes for shared selector (intersection)
         const commonDtypes = deriveDtypes(resPrefill.data).filter(dt => 
           deriveDtypes(resDecode.data).includes(dt)
         );
-        setAvailableDtypes(commonDtypes.length ? commonDtypes : ['bf16', 'fp16', 'fp8', 'int8']);
+        setAvailableDtypes(commonDtypes.length ? commonDtypes : ['bf16', 'fp16', 'int8']);
       } catch (e) {
         console.error('Failed to load hardware dtypes:', e);
-        setAvailableDtypes(['bf16', 'fp16', 'fp8', 'int8']);
-        setAvailableDtypesPrefill(['bf16', 'fp16', 'fp8', 'int8']);
-        setAvailableDtypesDecode(['bf16', 'fp16', 'fp8', 'int8']);
+        setAvailableDtypes(['bf16', 'fp16', 'int8']);
+        setAvailableDtypesPrefill(['bf16', 'fp16', 'int8']);
+        setAvailableDtypesDecode(['bf16', 'fp16', 'int8']);
       }
     };
     loadHardwareDtypes();
   }, [config.prefill.hardware, config.decode.hardware]);
+
+  // Clamp parallelism values when hardware changes
+  useEffect(() => {
+    const clampLayerConfigs = (layerConfigs, prefillHw, decodeHw) => {
+      const maxPrefill = getMaxParallelism(prefillHw);
+      const maxDecode = getMaxParallelism(decodeHw);
+      
+      let needsUpdate = false;
+      const clamped = {};
+      
+      Object.keys(layerConfigs).forEach(layerName => {
+        const layerConfig = layerConfigs[layerName];
+        const clampedPrefill = {
+          tp_degree: Math.min(layerConfig.prefill?.tp_degree || 1, maxPrefill),
+          cp_degree: Math.min(layerConfig.prefill?.cp_degree || 1, maxPrefill),
+          sp_degree: Math.min(layerConfig.prefill?.sp_degree || 1, maxPrefill)
+        };
+        const clampedDecode = {
+          tp_degree: Math.min(layerConfig.decode?.tp_degree || 1, maxDecode),
+          cp_degree: Math.min(layerConfig.decode?.cp_degree || 1, maxDecode),
+          sp_degree: Math.min(layerConfig.decode?.sp_degree || 1, maxDecode)
+        };
+        
+        // Check if any values changed
+        if (clampedPrefill.tp_degree !== (layerConfig.prefill?.tp_degree || 1) ||
+            clampedPrefill.cp_degree !== (layerConfig.prefill?.cp_degree || 1) ||
+            clampedPrefill.sp_degree !== (layerConfig.prefill?.sp_degree || 1) ||
+            clampedDecode.tp_degree !== (layerConfig.decode?.tp_degree || 1) ||
+            clampedDecode.cp_degree !== (layerConfig.decode?.cp_degree || 1) ||
+            clampedDecode.sp_degree !== (layerConfig.decode?.sp_degree || 1)) {
+          needsUpdate = true;
+        }
+        
+        clamped[layerName] = {
+          ...layerConfig,
+          prefill: clampedPrefill,
+          decode: clampedDecode
+        };
+      });
+      
+      return { clamped, needsUpdate };
+    };
+
+    if (config.prefill.hardware && config.decode.hardware && Object.keys(config.layerConfigs).length > 0) {
+      const result = clampLayerConfigs(config.layerConfigs, config.prefill.hardware, config.decode.hardware);
+      if (result.needsUpdate) {
+        setConfig(prev => ({
+          ...prev,
+          layerConfigs: result.clamped
+        }));
+      }
+    }
+
+    if (comparisonMode && comparisonConfig.prefill.hardware && comparisonConfig.decode.hardware && Object.keys(comparisonConfig.layerConfigs).length > 0) {
+      const result = clampLayerConfigs(comparisonConfig.layerConfigs, comparisonConfig.prefill.hardware, comparisonConfig.decode.hardware);
+      if (result.needsUpdate) {
+        setComparisonConfig(prev => ({
+          ...prev,
+          layerConfigs: result.clamped
+        }));
+      }
+    }
+  }, [config.prefill.hardware, config.decode.hardware, comparisonConfig.prefill.hardware, comparisonConfig.decode.hardware]);
 
   // Load layers when model changes (auto-load)
   useEffect(() => {
@@ -263,25 +368,19 @@ export default function App() {
   const computeMetrics = async () => {
     // Check if config is complete
     if (!isConfigComplete()) {
-      console.log('Config incomplete, skipping metrics computation');
       return;
     }
     
     setLoading(true);
     try {
       const requestPayload = buildSystemMetricsRequest();
-      console.log('Computing metrics with payload:', requestPayload);
-      
       const response = await axios.post(`${API_URL}/config/system-metrics`, requestPayload);
       setMetrics(response.data);
-      console.log('Metrics response:', response.data);
     } catch (err) {
-      console.error('Failed to compute metrics:', err);
       if (err.response?.data) {
-        console.error('Backend error:', err.response.data);
         setError(err.response.data.detail || 'Failed to compute metrics');
       } else {
-        setError('Failed to compute metrics');
+        setError(`Failed to compute metrics: ${err.message}`);
       }
     } finally {
       setLoading(false);
@@ -291,22 +390,15 @@ export default function App() {
   // Compute comparison metrics
   const computeComparisonMetrics = async () => {
     if (!isComparisonConfigComplete()) {
-      console.log('Comparison config incomplete, skipping metrics computation');
       return;
     }
     
     try {
       const requestPayload = buildComparisonMetricsRequest();
-      console.log('Computing comparison metrics with payload:', requestPayload);
-      
       const response = await axios.post(`${API_URL}/config/system-metrics`, requestPayload);
       setComparisonMetrics(response.data);
-      console.log('Comparison metrics response:', response.data);
     } catch (err) {
-      console.error('Failed to compute comparison metrics:', err);
-      if (err.response?.data) {
-        console.error('Backend error:', err.response.data);
-      }
+      // Silently handle comparison metrics errors
     }
   };
 
@@ -315,14 +407,33 @@ export default function App() {
     if (isConfigComplete()) {
       computeMetrics();
     }
-  }, [config]);
+  }, [
+    config.model,
+    config.prefill.hardware,
+    config.prefill.batchSize,
+    config.prefill.seqLen,
+    config.decode.hardware,
+    config.decode.batchSize,
+    config.decode.seqLen,
+    JSON.stringify(config.layerConfigs)
+  ]);
 
   // Auto-compute comparison metrics when comparison config changes
   useEffect(() => {
     if (comparisonMode && isComparisonConfigComplete()) {
       computeComparisonMetrics();
     }
-  }, [comparisonConfig, comparisonMode]);
+  }, [
+    comparisonMode,
+    comparisonConfig.model,
+    comparisonConfig.prefill.hardware,
+    comparisonConfig.prefill.batchSize,
+    comparisonConfig.prefill.seqLen,
+    comparisonConfig.decode.hardware,
+    comparisonConfig.decode.batchSize,
+    comparisonConfig.decode.seqLen,
+    JSON.stringify(comparisonConfig.layerConfigs)
+  ]);
 
   // Helper: Copy prefill config to decode (phase level only)
   const copyPrefillToDecodePhase = () => {
@@ -371,6 +482,22 @@ export default function App() {
         }
       }
     }));
+  };
+
+  // Calculate max parallelism based on hardware config
+  const getMaxParallelism = (hardwareId) => {
+    const hw = hardwareConfigs[hardwareId];
+    if (!hw) return 8; // Default fallback
+    const packagesPerDomain = hw.packages_per_domain || 1;
+    const domainsPerCluster = hw.domains_per_cluster || 1;
+    return packagesPerDomain * domainsPerCluster;
+  };
+
+  // Get available dtypes for a specific hardware
+  const getAvailableDtypes = (hardwareId) => {
+    const hw = hardwareConfigs[hardwareId];
+    if (!hw) return ['bf16', 'fp16', 'int8']; // Default fallback
+    return deriveDtypes(hw);
   };
 
   return (
@@ -425,7 +552,7 @@ export default function App() {
             position: 'absolute',
             left: '0',
             top: '0',
-            width: '600px',
+            width: '540px',
             backgroundColor: '#1D2F61',
             padding: '1.5rem',
             borderBottom: '1px solid #29AF83',
@@ -449,13 +576,12 @@ export default function App() {
 
         {/* Left Sidebar - Prefill Phase Configuration */}
         <aside style={{
-          width: '300px',
-          minWidth: '300px',
+          width: '270px',
+          minWidth: '270px',
           backgroundColor: '#1D2F61',
           padding: '1.5rem',
           overflowY: 'auto',
-          borderLeft: '1px solid #29AF83',
-          borderRight: '1px solid #29AF83'
+          borderLeft: '1px solid #29AF83'
         }}>
           <div style={{ height: '95px' }} />
 
@@ -486,25 +612,103 @@ export default function App() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="label">Batch Size</label>
-                  <input
-                    type="number"
-                    value={config.prefill.batchSize || ''}
-                    onChange={(e) => setConfig(prev => ({...prev, prefill: {...prev.prefill, batchSize: parseInt(e.target.value) || null}}))}
-                    placeholder="1"
-                    className="input-field"
-                    min="1"
-                  />
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type="text"
+                      value={config.prefill.batchSize || ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '' || /^\d+$/.test(val)) {
+                          setConfig(prev => ({...prev, prefill: {...prev.prefill, batchSize: val === '' ? null : parseInt(val)}}));
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const current = config.prefill.batchSize || 1;
+                          const newValue = e.key === 'ArrowUp' ? nextPowerOf2(current) : Math.max(1, prevPowerOf2(current));
+                          setConfig(prev => ({...prev, prefill: {...prev.prefill, batchSize: newValue}}));
+                          return false;
+                        }
+                      }}
+                      placeholder="1"
+                      className="input-field"
+                      style={{ paddingRight: '24px' }}
+                    />
+                    <div style={{ position: 'absolute', right: '2px', top: '50%', transform: 'translateY(-50%)', display: 'flex', flexDirection: 'column', gap: '0px' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const current = config.prefill.batchSize || 1;
+                          setConfig(prev => ({...prev, prefill: {...prev.prefill, batchSize: nextPowerOf2(current)}}));
+                        }}
+                        style={{ background: 'none', border: 'none', padding: '0', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#6B7280' }}
+                      >
+                        <ChevronUp size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const current = config.prefill.batchSize || 1;
+                          setConfig(prev => ({...prev, prefill: {...prev.prefill, batchSize: Math.max(1, prevPowerOf2(current))}}));
+                        }}
+                        style={{ background: 'none', border: 'none', padding: '0', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#6B7280' }}
+                      >
+                        <ChevronDown size={14} />
+                      </button>
+                    </div>
+                  </div>
                 </div>
                 <div>
                   <label className="label">Seq Length</label>
-                  <input
-                    type="number"
-                    value={config.prefill.seqLen || ''}
-                    onChange={(e) => setConfig(prev => ({...prev, prefill: {...prev.prefill, seqLen: parseInt(e.target.value) || null}}))}
-                    placeholder="2048"
-                    className="input-field"
-                    min="1"
-                  />
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type="text"
+                      value={config.prefill.seqLen || ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '' || /^\d+$/.test(val)) {
+                          setConfig(prev => ({...prev, prefill: {...prev.prefill, seqLen: val === '' ? null : parseInt(val)}}));
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const current = config.prefill.seqLen || 1;
+                          const newValue = e.key === 'ArrowUp' ? nextPowerOf2(current) : Math.max(1, prevPowerOf2(current));
+                          setConfig(prev => ({...prev, prefill: {...prev.prefill, seqLen: newValue}}));
+                          return false;
+                        }
+                      }}
+                      placeholder="2048"
+                      className="input-field"
+                      style={{ paddingRight: '24px' }}
+                    />
+                    <div style={{ position: 'absolute', right: '2px', top: '50%', transform: 'translateY(-50%)', display: 'flex', flexDirection: 'column', gap: '0px' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const current = config.prefill.seqLen || 1;
+                          setConfig(prev => ({...prev, prefill: {...prev.prefill, seqLen: nextPowerOf2(current)}}));
+                        }}
+                        style={{ background: 'none', border: 'none', padding: '0', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#6B7280' }}
+                      >
+                        <ChevronUp size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const current = config.prefill.seqLen || 1;
+                          setConfig(prev => ({...prev, prefill: {...prev.prefill, seqLen: Math.max(1, prevPowerOf2(current))}}));
+                        }}
+                        style={{ background: 'none', border: 'none', padding: '0', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#6B7280' }}
+                      >
+                        <ChevronDown size={14} />
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -521,6 +725,8 @@ export default function App() {
                   config={config.layerConfigs[layer.name]}
                   onConfigChange={handleLayerConfigChange}
                   phase="prefill"
+                  maxParallelism={getMaxParallelism(config.prefill.hardware)}
+                  availableDtypes={getAvailableDtypes(config.prefill.hardware)}
                 />
               ))}
             </div>
@@ -536,8 +742,8 @@ export default function App() {
 
       {/* Middle Sidebar - Decode Phase Configuration */}
       <aside style={{
-        width: '300px',
-        minWidth: '300px',
+        width: '270px',
+        minWidth: '270px',
         backgroundColor: '#1D2F61',
         padding: '1.5rem',
         overflowY: 'auto',
@@ -607,25 +813,103 @@ export default function App() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="label">Batch Size</label>
-                    <input
-                      type="number"
-                      value={config.decode.batchSize || ''}
-                      onChange={(e) => setConfig(prev => ({...prev, decode: {...prev.decode, batchSize: parseInt(e.target.value) || null}}))}
-                      placeholder="32"
-                      className="input-field"
-                      min="1"
-                    />
+                    <div style={{ position: 'relative' }}>
+                      <input
+                        type="text"
+                        value={config.decode.batchSize || ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '' || /^\d+$/.test(val)) {
+                            setConfig(prev => ({...prev, decode: {...prev.decode, batchSize: val === '' ? null : parseInt(val)}}));
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const current = config.decode.batchSize || 1;
+                            const newValue = e.key === 'ArrowUp' ? nextPowerOf2(current) : Math.max(1, prevPowerOf2(current));
+                            setConfig(prev => ({...prev, decode: {...prev.decode, batchSize: newValue}}));
+                            return false;
+                          }
+                        }}
+                        placeholder="32"
+                        className="input-field"
+                        style={{ paddingRight: '24px' }}
+                      />
+                      <div style={{ position: 'absolute', right: '2px', top: '50%', transform: 'translateY(-50%)', display: 'flex', flexDirection: 'column', gap: '0px' }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const current = config.decode.batchSize || 1;
+                            setConfig(prev => ({...prev, decode: {...prev.decode, batchSize: nextPowerOf2(current)}}));
+                          }}
+                          style={{ background: 'none', border: 'none', padding: '0', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#6B7280' }}
+                        >
+                          <ChevronUp size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const current = config.decode.batchSize || 1;
+                            setConfig(prev => ({...prev, decode: {...prev.decode, batchSize: Math.max(1, prevPowerOf2(current))}}));
+                          }}
+                          style={{ background: 'none', border: 'none', padding: '0', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#6B7280' }}
+                        >
+                          <ChevronDown size={14} />
+                        </button>
+                      </div>
+                    </div>
                   </div>
                   <div>
                     <label className="label">Seq Length</label>
-                    <input
-                      type="number"
-                      value={config.decode.seqLen || ''}
-                      onChange={(e) => setConfig(prev => ({...prev, decode: {...prev.decode, seqLen: parseInt(e.target.value) || null}}))}
-                      placeholder="256"
-                      className="input-field"
-                      min="1"
-                    />
+                    <div style={{ position: 'relative' }}>
+                      <input
+                        type="text"
+                        value={config.decode.seqLen || ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '' || /^\d+$/.test(val)) {
+                            setConfig(prev => ({...prev, decode: {...prev.decode, seqLen: val === '' ? null : parseInt(val)}}));
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const current = config.decode.seqLen || 1;
+                            const newValue = e.key === 'ArrowUp' ? nextPowerOf2(current) : Math.max(1, prevPowerOf2(current));
+                            setConfig(prev => ({...prev, decode: {...prev.decode, seqLen: newValue}}));
+                            return false;
+                          }
+                        }}
+                        placeholder="256"
+                        className="input-field"
+                        style={{ paddingRight: '24px' }}
+                      />
+                      <div style={{ position: 'absolute', right: '2px', top: '50%', transform: 'translateY(-50%)', display: 'flex', flexDirection: 'column', gap: '0px' }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const current = config.decode.seqLen || 1;
+                            setConfig(prev => ({...prev, decode: {...prev.decode, seqLen: nextPowerOf2(current)}}));
+                          }}
+                          style={{ background: 'none', border: 'none', padding: '0', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#6B7280' }}
+                        >
+                          <ChevronUp size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const current = config.decode.seqLen || 1;
+                            setConfig(prev => ({...prev, decode: {...prev.decode, seqLen: Math.max(1, prevPowerOf2(current))}}));
+                          }}
+                          style={{ background: 'none', border: 'none', padding: '0', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#6B7280' }}
+                        >
+                          <ChevronDown size={14} />
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -642,6 +926,8 @@ export default function App() {
                   config={config.layerConfigs[layer.name]}
                   onConfigChange={handleLayerConfigChange}
                   phase="decode"
+                  maxParallelism={getMaxParallelism(config.decode.hardware)}
+                  availableDtypes={getAvailableDtypes(config.decode.hardware)}
                 />
               ))}
             </div>
@@ -657,7 +943,7 @@ export default function App() {
       </div> {/* End Primary Sidebars Container */}
 
       {/* Main Content Area */}
-      <main className="flex-1 p-8 overflow-y-auto" style={{ width: '100%', minWidth: 0 }}>
+      <main className="flex-1 p-8" style={{ width: '100%', minWidth: 0, overflowY: 'auto', height: '100%' }}>
         {error && (
           <motion.div
             initial={{ opacity: 0, y: -20 }}
@@ -685,6 +971,7 @@ export default function App() {
             {/* Metrics Display */}
             {metrics && (
               <MetricsDisplay 
+                key={`${metrics.tpot_ms}-${comparisonMetrics?.tpot_ms || 0}`}
                 metrics={metrics} 
                 comparisonMetrics={comparisonMode ? comparisonMetrics : null}
               />
@@ -708,11 +995,11 @@ export default function App() {
         {comparisonMode && (
           <div style={{ position: 'relative', display: 'flex', marginLeft: 'auto' }}>
             {/* Model Selection - Spans Both Comparison Phases */}
-            <div style={{ 
+            <div style={{
               position: 'absolute',
               left: '0',
               top: '0',
-              width: '600px',
+              width: '540px',
               backgroundColor: '#1D2F61',
               padding: '1.5rem',
               borderBottom: '1px solid #f96c56',
@@ -736,13 +1023,12 @@ export default function App() {
 
             {/* Comparison Prefill Sidebar */}
             <aside style={{
-              width: '300px',
-              minWidth: '300px',
+              width: '270px',
+              minWidth: '270px',
               backgroundColor: '#1D2F61',
               padding: '1.5rem',
               overflowY: 'auto',
-              borderLeft: '1px solid #f96c56',
-              borderRight: '1px solid #f96c56'
+              borderLeft: '1px solid #f96c56'
             }}>
               <div style={{ height: '95px' }} />
 
@@ -773,32 +1059,110 @@ export default function App() {
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="label">Batch Size</label>
-                        <input
-                          type="number"
-                          value={comparisonConfig.prefill.batchSize || ''}
-                          onChange={(e) => setComparisonConfig(prev => ({...prev, prefill: {...prev.prefill, batchSize: parseInt(e.target.value) || null}}))}
-                          placeholder="1"
-                          className="input-field"
-                          min="1"
-                        />
+                        <div style={{ position: 'relative' }}>
+                          <input
+                            type="text"
+                            value={comparisonConfig.prefill.batchSize || ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '' || /^\d+$/.test(val)) {
+                                setComparisonConfig(prev => ({...prev, prefill: {...prev.prefill, batchSize: val === '' ? null : parseInt(val)}}));
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                const current = comparisonConfig.prefill.batchSize || 1;
+                                const newValue = e.key === 'ArrowUp' ? nextPowerOf2(current) : Math.max(1, prevPowerOf2(current));
+                                setComparisonConfig(prev => ({...prev, prefill: {...prev.prefill, batchSize: newValue}}));
+                                return false;
+                              }
+                            }}
+                            placeholder="1"
+                            className="input-field"
+                            style={{ paddingRight: '24px' }}
+                          />
+                          <div style={{ position: 'absolute', right: '2px', top: '50%', transform: 'translateY(-50%)', display: 'flex', flexDirection: 'column', gap: '0px' }}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const current = comparisonConfig.prefill.batchSize || 1;
+                                setComparisonConfig(prev => ({...prev, prefill: {...prev.prefill, batchSize: nextPowerOf2(current)}}));
+                              }}
+                              style={{ background: 'none', border: 'none', padding: '0', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#6B7280' }}
+                            >
+                              <ChevronUp size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const current = comparisonConfig.prefill.batchSize || 1;
+                                setComparisonConfig(prev => ({...prev, prefill: {...prev.prefill, batchSize: Math.max(1, prevPowerOf2(current))}}));
+                              }}
+                              style={{ background: 'none', border: 'none', padding: '0', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#6B7280' }}
+                            >
+                              <ChevronDown size={14} />
+                            </button>
+                          </div>
+                        </div>
                       </div>
                       <div>
                         <label className="label">Seq Length</label>
-                        <input
-                          type="number"
-                          value={comparisonConfig.prefill.seqLen || ''}
-                          onChange={(e) => setComparisonConfig(prev => ({...prev, prefill: {...prev.prefill, seqLen: parseInt(e.target.value) || null}}))}
-                          placeholder="2048"
-                          className="input-field"
-                          min="1"
-                        />
+                        <div style={{ position: 'relative' }}>
+                          <input
+                            type="text"
+                            value={comparisonConfig.prefill.seqLen || ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '' || /^\d+$/.test(val)) {
+                                setComparisonConfig(prev => ({...prev, prefill: {...prev.prefill, seqLen: val === '' ? null : parseInt(val)}}));
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                const current = comparisonConfig.prefill.seqLen || 1;
+                                const newValue = e.key === 'ArrowUp' ? nextPowerOf2(current) : Math.max(1, prevPowerOf2(current));
+                                setComparisonConfig(prev => ({...prev, prefill: {...prev.prefill, seqLen: newValue}}));
+                                return false;
+                              }
+                            }}
+                            placeholder="2048"
+                            className="input-field"
+                            style={{ paddingRight: '24px' }}
+                          />
+                          <div style={{ position: 'absolute', right: '2px', top: '50%', transform: 'translateY(-50%)', display: 'flex', flexDirection: 'column', gap: '0px' }}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const current = comparisonConfig.prefill.seqLen || 1;
+                                setComparisonConfig(prev => ({...prev, prefill: {...prev.prefill, seqLen: nextPowerOf2(current)}}));
+                              }}
+                              style={{ background: 'none', border: 'none', padding: '0', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#6B7280' }}
+                            >
+                              <ChevronUp size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const current = comparisonConfig.prefill.seqLen || 1;
+                                setComparisonConfig(prev => ({...prev, prefill: {...prev.prefill, seqLen: Math.max(1, prevPowerOf2(current))}}));
+                              }}
+                              style={{ background: 'none', border: 'none', padding: '0', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#6B7280' }}
+                            >
+                              <ChevronDown size={14} />
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
 
                   {/* Layer Configuration Cards */}
                   <div className="flex flex-col gap-4" style={{ marginTop: '1.5rem' }}>
-                    <h3 className="text-accent font-semibold flex items-center gap-2">
+                    <h3 className="font-semibold flex items-center gap-2" style={{ color: '#f96c56' }}>
                       <Layers size={18} /> Layer Configuration
                     </h3>
                     {layers.map(layer => (
@@ -827,6 +1191,8 @@ export default function App() {
                         }}
                         phase="prefill"
                         accentColor="#f96c56"
+                        maxParallelism={getMaxParallelism(comparisonConfig.prefill.hardware)}
+                        availableDtypes={getAvailableDtypes(comparisonConfig.prefill.hardware)}
                       />
                     ))}
                   </div>
@@ -842,8 +1208,8 @@ export default function App() {
 
             {/* Comparison Decode Sidebar */}
             <aside style={{
-              width: '300px',
-              minWidth: '300px',
+              width: '270px',
+              minWidth: '270px',
               backgroundColor: '#1D2F61',
               padding: '1.5rem',
               overflowY: 'auto',
@@ -916,32 +1282,110 @@ export default function App() {
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="label">Batch Size</label>
-                        <input
-                          type="number"
-                          value={comparisonConfig.decode.batchSize || ''}
-                          onChange={(e) => setComparisonConfig(prev => ({...prev, decode: {...prev.decode, batchSize: parseInt(e.target.value) || null}}))}
-                          placeholder="1"
-                          className="input-field"
-                          min="1"
-                        />
+                        <div style={{ position: 'relative' }}>
+                          <input
+                            type="text"
+                            value={comparisonConfig.decode.batchSize || ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '' || /^\d+$/.test(val)) {
+                                setComparisonConfig(prev => ({...prev, decode: {...prev.decode, batchSize: val === '' ? null : parseInt(val)}}));
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                const current = comparisonConfig.decode.batchSize || 1;
+                                const newValue = e.key === 'ArrowUp' ? nextPowerOf2(current) : Math.max(1, prevPowerOf2(current));
+                                setComparisonConfig(prev => ({...prev, decode: {...prev.decode, batchSize: newValue}}));
+                                return false;
+                              }
+                            }}
+                            placeholder="1"
+                            className="input-field"
+                            style={{ paddingRight: '24px' }}
+                          />
+                          <div style={{ position: 'absolute', right: '2px', top: '50%', transform: 'translateY(-50%)', display: 'flex', flexDirection: 'column', gap: '0px' }}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const current = comparisonConfig.decode.batchSize || 1;
+                                setComparisonConfig(prev => ({...prev, decode: {...prev.decode, batchSize: nextPowerOf2(current)}}));
+                              }}
+                              style={{ background: 'none', border: 'none', padding: '0', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#6B7280' }}
+                            >
+                              <ChevronUp size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const current = comparisonConfig.decode.batchSize || 1;
+                                setComparisonConfig(prev => ({...prev, decode: {...prev.decode, batchSize: Math.max(1, prevPowerOf2(current))}}));
+                              }}
+                              style={{ background: 'none', border: 'none', padding: '0', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#6B7280' }}
+                            >
+                              <ChevronDown size={14} />
+                            </button>
+                          </div>
+                        </div>
                       </div>
                       <div>
                         <label className="label">Seq Length</label>
-                        <input
-                          type="number"
-                          value={comparisonConfig.decode.seqLen || ''}
-                          onChange={(e) => setComparisonConfig(prev => ({...prev, decode: {...prev.decode, seqLen: parseInt(e.target.value) || null}}))}
-                          placeholder="1"
-                          className="input-field"
-                          min="1"
-                        />
+                        <div style={{ position: 'relative' }}>
+                          <input
+                            type="text"
+                            value={comparisonConfig.decode.seqLen || ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '' || /^\d+$/.test(val)) {
+                                setComparisonConfig(prev => ({...prev, decode: {...prev.decode, seqLen: val === '' ? null : parseInt(val)}}));
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                const current = comparisonConfig.decode.seqLen || 1;
+                                const newValue = e.key === 'ArrowUp' ? nextPowerOf2(current) : Math.max(1, prevPowerOf2(current));
+                                setComparisonConfig(prev => ({...prev, decode: {...prev.decode, seqLen: newValue}}));
+                                return false;
+                              }
+                            }}
+                            placeholder="1"
+                            className="input-field"
+                            style={{ paddingRight: '24px' }}
+                          />
+                          <div style={{ position: 'absolute', right: '2px', top: '50%', transform: 'translateY(-50%)', display: 'flex', flexDirection: 'column', gap: '0px' }}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const current = comparisonConfig.decode.seqLen || 1;
+                                setComparisonConfig(prev => ({...prev, decode: {...prev.decode, seqLen: nextPowerOf2(current)}}));
+                              }}
+                              style={{ background: 'none', border: 'none', padding: '0', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#6B7280' }}
+                            >
+                              <ChevronUp size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const current = comparisonConfig.decode.seqLen || 1;
+                                setComparisonConfig(prev => ({...prev, decode: {...prev.decode, seqLen: Math.max(1, prevPowerOf2(current))}}));
+                              }}
+                              style={{ background: 'none', border: 'none', padding: '0', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#6B7280' }}
+                            >
+                              <ChevronDown size={14} />
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
 
                   {/* Layer Configuration Cards */}
                   <div className="flex flex-col gap-4" style={{ marginTop: '1.5rem' }}>
-                    <h3 className="text-accent font-semibold flex items-center gap-2">
+                    <h3 className="font-semibold flex items-center gap-2" style={{ color: '#f96c56' }}>
                       <Layers size={18} /> Layer Configuration
                     </h3>
                     {layers.map(layer => (
@@ -970,6 +1414,8 @@ export default function App() {
                         }}
                         phase="decode"
                         accentColor="#f96c56"
+                        maxParallelism={getMaxParallelism(comparisonConfig.decode.hardware)}
+                        availableDtypes={getAvailableDtypes(comparisonConfig.decode.hardware)}
                       />
                     ))}
                   </div>

@@ -68,7 +68,7 @@ class MLPLayer(Layer):
         
         super().__init__(layer_idx, dtype, parallelism)
     
-    def _get_num_chips(self) -> int:
+    def _get_num_packages(self) -> int:
         """Number of chips used for this layer's shard. TP modeled; PP TODO."""
         # TODO: Model pipeline-parallel stages explicitly with per-stage metrics
         # Note: Sequence parallelism typically shares devices with TP (doesn't add chips)

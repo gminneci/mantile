@@ -2,17 +2,19 @@
   "name": "NVIDIA NVL-72 (Full Rack)",
   "description": "Full NVL-72 rack with 72 GB200 packages (144 Blackwell GPUs total). Aggregate specifications for the entire rack.",
   "manufacturer": "NVIDIA",
-  "compute": {
-    "fp16": 180000.0,
-    "bf16": 180000.0,
-    "fp8": 360000.0,
-    "int8": 360000.0
+  "compute_per_package_GFlops": {
+    "bf16": 2500.0,
+    "nvfp8": 5000.0,
+    "nvfp4": 10000.0,
+    "int8": 5000.0
   },
   "memory": [
     {"type": "HBM", "capacity_gb": 13824.0, "bandwidth_gbps": 589824.0}
   ],
   "interconnect_bandwidth_gbps": 64800.0,
   "interconnect_latency_us": 0.20,
-  "chips_per_node": 72,
-  "nodes_per_cluster": 1
+  "power_kw": 120.0,
+  "tco_sec_usd": 0.045,
+  "packages_per_domain": 72,
+  "domains_per_cluster": 1
 }

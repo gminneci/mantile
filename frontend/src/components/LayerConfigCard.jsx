@@ -11,11 +11,22 @@ export default function LayerConfigCard({
   config, 
   onConfigChange,
   phase = 'prefill', // 'prefill' or 'decode'
-  accentColor = '#29AF83' // Default teal, can be overridden with orange
+  accentColor = '#29AF83', // Default teal, can be overridden with orange
+  maxParallelism = 8, // Maximum parallelism degree based on hardware
+  availableDtypes = ['bf16', 'fp16', 'int8'] // Available dtypes from hardware config
 }) {
   const availableStrategies = layer.available_parallelism || [];
-  const maxChips = 8; // Configurable max
   const phaseConfig = config?.[phase] || { tp_degree: 1, cp_degree: 1, sp_degree: 1 };
+  
+  // Calculate dynamic max for each slider based on hybrid parallelism constraint
+  // Product of TP × CP × SP cannot exceed maxParallelism
+  const getDynamicMax = (strategyKey) => {
+    const tp = strategyKey === 'tp_degree' ? 1 : (phaseConfig.tp_degree || 1);
+    const cp = strategyKey === 'cp_degree' ? 1 : (phaseConfig.cp_degree || 1);
+    const sp = strategyKey === 'sp_degree' ? 1 : (phaseConfig.sp_degree || 1);
+    const product = tp * cp * sp;
+    return Math.floor(maxParallelism / product);
+  };
   const dtype = config?.dtype || '';
 
   const strategyMapping = {
@@ -47,6 +58,8 @@ export default function LayerConfigCard({
             const mapping = strategyMapping[strategy];
             if (!mapping) return null;
             
+            const dynamicMax = getDynamicMax(mapping.key);
+            
             return (
               <div key={strategy}>
                 <label className="text-dim uppercase tracking-wider" style={{ fontSize: '0.7rem' }}>
@@ -56,8 +69,8 @@ export default function LayerConfigCard({
                   <input
                     type="range"
                     min="1"
-                    max={maxChips}
-                    value={phaseConfig[mapping.key]}
+                    max={dynamicMax}
+                    value={Math.min(phaseConfig[mapping.key], dynamicMax)}
                     onChange={(e) => onConfigChange(layer.name, phase, mapping.key, parseInt(e.target.value))}
                     className="flex-1 w-full h-2 rounded-lg appearance-none cursor-pointer"
                     style={{ 
@@ -66,7 +79,7 @@ export default function LayerConfigCard({
                     }}
                   />
                   <span className="font-mono text-sm w-8 text-right" style={{ color: accentColor }}>
-                    {phaseConfig[mapping.key]}
+                    {Math.min(phaseConfig[mapping.key], dynamicMax)}
                   </span>
                 </div>
               </div>
@@ -92,11 +105,9 @@ export default function LayerConfigCard({
           onChange={(e) => onConfigChange(layer.name, null, 'dtype', e.target.value)}
         >
           <option value="">Select...</option>
-          <option value="fp32">FP32</option>
-          <option value="fp16">FP16</option>
-          <option value="bf16">BF16</option>
-          <option value="fp8">FP8</option>
-          <option value="int8">INT8</option>
+          {availableDtypes.map(dt => (
+            <option key={dt} value={dt}>{dt.toUpperCase()}</option>
+          ))}
         </select>
       </div>
     </motion.div>

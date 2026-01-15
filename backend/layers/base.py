@@ -26,6 +26,10 @@ class DataType(Enum):
     FP16 = "fp16"
     BF16 = "bf16"
     FP8 = "fp8"
+    MXFP8 = "mxfp8"
+    MXFP4 = "mxfp4"
+    NVFP8 = "nvfp8"
+    NVFP4 = "nvfp4"
     INT8 = "int8"
     
     @property
@@ -36,6 +40,10 @@ class DataType(Enum):
             "fp16": 2.0,
             "bf16": 2.0,
             "fp8": 1.0,
+            "mxfp8": 8.25/8,
+            "nvfp8": 8.25/8,
+            "mxfp4": 4.25/8,
+            "nvfp4": 4.5/8,
             "int8": 1.0,
         }[self.value]
 
@@ -44,41 +52,41 @@ class DataType(Enum):
 class LayerMetrics:
     """
     Output metrics from a layer computation.
-    Includes both per-chip metrics (what each chip does) and aggregate metrics (total across all chips).
+    Includes both per-package metrics (what each package does) and aggregate metrics (total across all packages).
     
-    Per-chip metrics (what ONE chip computes/stores):
-        - flops_per_chip: FLOPs executed on one chip
-        - weight_memory_per_chip: Parameter memory on one chip
-        - activation_memory_per_chip: Activation memory on one chip
-        - kv_cache_per_chip: KV cache on one chip (attention only)
+    Per-package metrics (what ONE package computes/stores):
+        - flops_per_package: FLOPs executed on one package
+        - weight_memory_per_package: Parameter memory on one package
+        - activation_memory_per_package: Activation memory on one package
+        - kv_cache_per_package: KV cache on one package (attention only)
     
-    Aggregate metrics (total across all chips):
-        - flops_total: Total FLOPs across all chips (= flops_per_chip * num_chips)
-        - weight_memory_total: Total parameters across all chips
-        - activation_memory_total: Total activations across all chips
-        - kv_cache_total: Total KV cache across all chips
+    Aggregate metrics (total across all packages):
+        - flops_total: Total FLOPs across all packages (= flops_per_package * num_packages)
+        - weight_memory_total: Total parameters across all packages
+        - activation_memory_total: Total activations across all packages
+        - kv_cache_total: Total KV cache across all packages
     
     Hardware-dependent (None if hardware not provided):
         - compute_time_ms: Time to execute (accounts for parallelism)
         - weight_load_time_ms: Time to load weights from memory
-        - communication_bytes: Inter-chip data transfer size
-        - communication_time_ms: Time for inter-chip communication
+        - communication_bytes: Inter-package data transfer size
+        - communication_time_ms: Time for inter-package communication
     
     Derived/simulation metrics (computed from execution model):
-        - memory_bandwidth_per_chip_GBps: Peak DRAM bandwidth requirement per chip
-        - kv_cache_bandwidth_per_chip_GBps: Peak KV cache bandwidth requirement per chip
-        - communication_bandwidth_GBps: Inter-chip bandwidth requirement
+        - memory_bandwidth_per_package_GBps: Peak DRAM bandwidth requirement per package
+        - kv_cache_bandwidth_per_package_GBps: Peak KV cache bandwidth requirement per package
+        - communication_bandwidth_GBps: Inter-package bandwidth requirement
         - wall_clock_time_ms: Actual execution time with overlaps considered
         - compute_communication_overlap: Whether compute/communication can overlap
     
     Parallelism info:
-        - num_chips: Number of chips this layer uses
+        - num_packages: Number of packages this layer uses
     """
-    # Per-chip metrics
-    flops_per_chip: int
-    weight_memory_per_chip: int
-    activation_memory_per_chip: int
-    kv_cache_per_chip: int = 0
+    # Per-package metrics
+    flops_per_package: int
+    weight_memory_per_package: int
+    activation_memory_per_package: int
+    kv_cache_per_package: int = 0
     
     # Aggregate metrics
     flops_total: int = 0
@@ -93,14 +101,14 @@ class LayerMetrics:
     communication_time_ms: Optional[float] = None
     
     # Derived/simulation metrics (optional, require execution model)
-    memory_bandwidth_per_chip_GBps: Optional[float] = None
-    kv_cache_bandwidth_per_chip_GBps: Optional[float] = None
+    memory_bandwidth_per_package_GBps: Optional[float] = None
+    kv_cache_bandwidth_per_package_GBps: Optional[float] = None
     communication_bandwidth_GBps: Optional[float] = None
     wall_clock_time_ms: Optional[float] = None
     compute_communication_overlap: Optional[bool] = None
     
     # Parallelism
-    num_chips: int = 1
+    num_packages: int = 1
 
 
 class Layer(ABC):
@@ -115,7 +123,7 @@ class Layer(ABC):
         - compute_weight_memory(): Calculate parameter memory footprint
         - compute_activation_memory(): Calculate activation memory footprint
         - compute_kv_cache(): Calculate KV cache size (if applicable)
-        - _get_num_chips(): Return number of chips this layer uses
+        - _get_num_packages(): Return number of packages this layer uses
     
     Subclasses should define:
         - SUPPORTED_PARALLELISM: Set of supported parallelism types (e.g., {"tensor_parallel", "pipeline_parallel"})
@@ -168,12 +176,12 @@ class Layer(ABC):
             )
     
     @abstractmethod
-    def _get_num_chips(self) -> int:
+    def _get_num_packages(self) -> int:
         """
-        Calculate number of chips this layer uses based on parallelism config.
+        Calculate number of packages this layer uses based on parallelism config.
         
         Returns:
-            Number of chips (1 if no parallelism)
+            Number of packages (1 if no parallelism)
         """
         pass
     
@@ -269,31 +277,31 @@ class Layer(ABC):
                 - interconnect_latency_us: Inter-chip latency (microseconds)
                 
         Returns:
-            LayerMetrics object with per-chip and aggregate metrics
+            LayerMetrics object with per-package and aggregate metrics
         """
         # Convert string inputs to enums
         if isinstance(phase, str):
             phase = Phase(phase)
         
-        # Get number of chips for this layer
-        num_chips = self._get_num_chips()
+        # Get number of packages for this layer
+        num_packages = self._get_num_packages()
         
-        # Compute per-chip metrics (what ONE chip does)
-        flops_per_chip = self.compute_flops(batch_size, seq_len, phase)
-        weight_mem_per_chip = self.compute_weight_memory()
-        activation_mem_per_chip = self.compute_activation_memory(batch_size, seq_len, phase)
-        kv_cache_per_chip = self.compute_kv_cache(batch_size, seq_len)
+        # Compute per-package metrics (what ONE package does)
+        flops_per_package = self.compute_flops(batch_size, seq_len, phase)
+        weight_mem_per_package = self.compute_weight_memory()
+        activation_mem_per_package = self.compute_activation_memory(batch_size, seq_len, phase)
+        kv_cache_per_package = self.compute_kv_cache(batch_size, seq_len)
         
         # Communication bytes (if applicable based on parallelism strategy)
         # This is computed regardless of hardware config, as it's a property of the layer
         comm_bytes = self._compute_communication_bytes(batch_size, seq_len, phase, hardware or {})
         
-        # Compute aggregate metrics (total across all chips)
-        # Note: FLOPs might not scale linearly with num_chips (e.g., PP doesn't replicate work)
-        flops_total = flops_per_chip * num_chips  # Override in subclasses if needed
-        weight_mem_total = weight_mem_per_chip * num_chips
-        activation_mem_total = activation_mem_per_chip * num_chips
-        kv_cache_total = kv_cache_per_chip * num_chips
+        # Compute aggregate metrics (total across all packages)
+        # Note: FLOPs might not scale linearly with num_packages (e.g., PP doesn't replicate work)
+        flops_total = flops_per_package * num_packages  # Override in subclasses if needed
+        weight_mem_total = weight_mem_per_package * num_packages
+        activation_mem_total = activation_mem_per_package * num_packages
+        kv_cache_total = kv_cache_per_package * num_packages
         
         # Compute hardware-dependent metrics if config provided
         compute_time = None
@@ -301,23 +309,23 @@ class Layer(ABC):
         comm_time = None
         
         # Derived metrics (initialized as None)
-        memory_bw_per_chip = None
-        kv_cache_bw_per_chip = None
+        memory_bw_per_package = None
+        kv_cache_bw_per_package = None
         comm_bw = None
         wall_clock_time = None
         can_overlap = None
         
         if hardware:
             # Compute time: FLOPs / (peak_tflops * 10^12)
-            # Per-chip FLOPs since work is parallelized
+            # Per-package FLOPs since work is parallelized
             peak_flops = hardware.get("compute_tflops", 0) * 1e12
             if peak_flops > 0:
-                compute_time = (flops_per_chip / peak_flops) * 1000  # Convert to ms
+                compute_time = (flops_per_package / peak_flops) * 1000  # Convert to ms
             
-            # Weight load time: bytes / bandwidth (per-chip)
+            # Weight load time: bytes / bandwidth (per-package)
             mem_bw = hardware.get("memory_bandwidth_gb_s", 0) * 1e9
             if mem_bw > 0:
-                weight_load_time = (weight_mem_per_chip / mem_bw) * 1000  # Convert to ms
+                weight_load_time = (weight_mem_per_package / mem_bw) * 1000  # Convert to ms
             
             # Communication time (if communication bytes were computed)
             if comm_bytes is not None:
@@ -332,16 +340,16 @@ class Layer(ABC):
             
             # Compute derived/simulation metrics
             if compute_time is not None and compute_time > 0:
-                # Memory bandwidth per chip: (weights + activations) / time
+                # Memory bandwidth per package: (weights + activations) / time
                 # Use the max of compute_time and weight_load_time for realistic estimate
                 effective_time_ms = max(compute_time, weight_load_time) if weight_load_time else compute_time
                 
-                total_memory_bytes = weight_mem_per_chip + activation_mem_per_chip
-                memory_bw_per_chip = (total_memory_bytes / (effective_time_ms / 1000)) / 1e9  # GB/s
+                total_memory_bytes = weight_mem_per_package + activation_mem_per_package
+                memory_bw_per_package = (total_memory_bytes / (effective_time_ms / 1000)) / 1e9  # GB/s
                 
                 # KV cache bandwidth (if applicable)
-                if kv_cache_per_chip > 0:
-                    kv_cache_bw_per_chip = (kv_cache_per_chip / (effective_time_ms / 1000)) / 1e9  # GB/s
+                if kv_cache_per_package > 0:
+                    kv_cache_bw_per_package = (kv_cache_per_package / (effective_time_ms / 1000)) / 1e9  # GB/s
             
             # Communication bandwidth (if applicable)
             if comm_bytes is not None and comm_time is not None and comm_time > 0:
@@ -364,10 +372,10 @@ class Layer(ABC):
                 wall_clock_time = comm_time
         
         return LayerMetrics(
-            flops_per_chip=flops_per_chip,
-            weight_memory_per_chip=weight_mem_per_chip,
-            activation_memory_per_chip=activation_mem_per_chip,
-            kv_cache_per_chip=kv_cache_per_chip,
+            flops_per_package=flops_per_package,
+            weight_memory_per_package=weight_mem_per_package,
+            activation_memory_per_package=activation_mem_per_package,
+            kv_cache_per_package=kv_cache_per_package,
             flops_total=flops_total,
             weight_memory_total=weight_mem_total,
             activation_memory_total=activation_mem_total,
@@ -376,12 +384,12 @@ class Layer(ABC):
             weight_load_time_ms=weight_load_time,
             communication_bytes=comm_bytes,
             communication_time_ms=comm_time,
-            memory_bandwidth_per_chip_GBps=memory_bw_per_chip,
-            kv_cache_bandwidth_per_chip_GBps=kv_cache_bw_per_chip,
+            memory_bandwidth_per_package_GBps=memory_bw_per_package,
+            kv_cache_bandwidth_per_package_GBps=kv_cache_bw_per_package,
             communication_bandwidth_GBps=comm_bw,
             wall_clock_time_ms=wall_clock_time,
             compute_communication_overlap=can_overlap,
-            num_chips=num_chips
+            num_packages=num_packages
         )
     
     def _compute_communication_bytes(
@@ -392,7 +400,7 @@ class Layer(ABC):
         hardware: dict
     ) -> Optional[int]:
         """
-        Compute inter-chip communication requirements.
+        Compute inter-package communication requirements.
         Default implementation returns None. Subclasses override for specific patterns.
         Uses self.dtype for precision.
         
@@ -400,7 +408,7 @@ class Layer(ABC):
             batch_size: Number of sequences
             seq_len: Sequence length
             phase: PREFILL or DECODE
-            hardware: Hardware config (includes num_chips, parallelism strategy, etc.)
+            hardware: Hardware config (includes num_packages, parallelism strategy, etc.)
             
         Returns:
             Bytes to communicate, or None if not applicable

@@ -133,7 +133,7 @@ def compute_phase_metrics(phase_req: PhaseMetricsRequest, phase: Phase) -> dict:
     total_kv_cache_gb = 0.0
     compute_time_ms = 0.0
     memory_time_ms = 0.0
-    max_chips = 1
+    max_packages = 1
 
     for layer_name, config in phase_req.layers.items():
         # Find layer definition in model config
@@ -152,11 +152,11 @@ def compute_phase_metrics(phase_req: PhaseMetricsRequest, phase: Phase) -> dict:
 
         num_instances = layer_type.get("count", 1)
 
-        # Hardware characteristics per chip
+        # Hardware characteristics per package
         hbm_memory = next((m for m in hardware_cfg['memory'] if 'HBM' in m['type']), hardware_cfg['memory'][0])
-        hbm_bw_per_chip = hbm_memory['bandwidth_gbps']
-        assert dtype_enum.value in hardware_cfg['compute'], f"Hardware missing compute spec for dtype {dtype_enum.value}"
-        peak_tflops_per_chip = hardware_cfg['compute'][dtype_enum.value]
+        hbm_bw_per_package = hbm_memory['bandwidth_gbps']
+        assert dtype_enum.value in hardware_cfg['compute_per_package_GFlops'], f"Hardware missing compute spec for dtype {dtype_enum.value}"
+        peak_gflops_per_package = hardware_cfg['compute_per_package_GFlops'][dtype_enum.value]
 
         # Compute metrics for this phase
         m = layer.compute_metrics(
@@ -164,13 +164,15 @@ def compute_phase_metrics(phase_req: PhaseMetricsRequest, phase: Phase) -> dict:
             seq_len=phase_req.seq_len,
             phase=phase,
         )
-        max_chips = max(max_chips, m.num_chips)
-        total_weight_memory_gb += (m.weight_memory_per_chip * num_instances) / 1e9
-        total_activation_memory_gb += (m.activation_memory_per_chip * num_instances) / 1e9
-        total_kv_cache_gb += (m.kv_cache_per_chip * num_instances) / 1e9
+        max_packages = max(max_packages, m.num_packages)
+        total_weight_memory_gb += (m.weight_memory_per_package * num_instances) / 1e9
+        total_activation_memory_gb += (m.activation_memory_per_package * num_instances) / 1e9
+        total_kv_cache_gb += (m.kv_cache_per_package * num_instances) / 1e9
 
-        compute_time_ms += ((m.flops_per_chip * num_instances) / 1e12) / peak_tflops_per_chip * 1000
-        memory_time_ms += ((m.weight_memory_per_chip * num_instances) / 1e9) / hbm_bw_per_chip * 1000
+        # Total compute available = peak per package * number of packages in use
+        total_peak_gflops = peak_gflops_per_package * m.num_packages
+        compute_time_ms += ((m.flops_per_package * num_instances) / 1e9) / total_peak_gflops * 1000
+        memory_time_ms += ((m.weight_memory_per_package * num_instances) / 1e9) / hbm_bw_per_package * 1000
 
     return {
         "total_weight_memory_gb": total_weight_memory_gb,
@@ -178,7 +180,7 @@ def compute_phase_metrics(phase_req: PhaseMetricsRequest, phase: Phase) -> dict:
         "total_kv_cache_gb": total_kv_cache_gb,
         "compute_time_ms": compute_time_ms,
         "memory_time_ms": memory_time_ms,
-        "max_chips": max_chips,
+        "max_packages": max_packages,
     }
 
 
@@ -203,7 +205,7 @@ def compute_system_metrics(prefill_req: PhaseMetricsRequest, decode_req: PhaseMe
     decode_metrics = compute_phase_metrics(decode_req, Phase.DECODE)
 
     # Aggregate system-level metrics
-    max_chips = max(prefill_metrics["max_chips"], decode_metrics["max_chips"])
+    max_packages = max(prefill_metrics["max_packages"], decode_metrics["max_packages"])
     
     # Use prefill memory totals (weights/activations/kv are same for both phases)
     total_weight_memory_gb = prefill_metrics["total_weight_memory_gb"]
@@ -213,7 +215,14 @@ def compute_system_metrics(prefill_req: PhaseMetricsRequest, decode_req: PhaseMe
     # Derive latencies
     ttft_ms = max(prefill_metrics["compute_time_ms"], prefill_metrics["memory_time_ms"])
     tpot_ms = max(decode_metrics["compute_time_ms"], decode_metrics["memory_time_ms"])
-    throughput_tokens_s = 1000.0 / tpot_ms if tpot_ms > 0 else 0.0
+    
+    # TPS/User is the per-user token generation rate (independent of batch size)
+    tps_user = 1000.0 / tpot_ms if tpot_ms > 0 else 0.0
+    
+    # System throughput is the total tokens/sec across all users in the batch
+    # Use decode batch size since throughput is determined by decode phase
+    throughput_tokens_s = tps_user * decode_req.batch_size
+    
     total_latency_ms = ttft_ms + (tpot_ms * decode_req.seq_len)
 
     # Bottleneck analysis
@@ -224,29 +233,40 @@ def compute_system_metrics(prefill_req: PhaseMetricsRequest, decode_req: PhaseMe
     else:
         bottleneck = "balanced"
 
-    # Memory per chip and capacity check
-    memory_per_chip_gb = (
+    # Memory per package and capacity check
+    memory_per_package_gb = (
         total_weight_memory_gb + total_activation_memory_gb + total_kv_cache_gb
-    ) / max_chips if max_chips > 0 else 0.0
+    ) / max_packages if max_packages > 0 else 0.0
     
     hbm_memory = next((m for m in hardware_cfg['memory'] if 'HBM' in m['type']), hardware_cfg['memory'][0])
     hw_capacity_gb = hbm_memory['capacity_gb']
-    fits_on_hardware = memory_per_chip_gb <= hw_capacity_gb
+    fits_on_hardware = memory_per_package_gb <= hw_capacity_gb
+    
+    # Power and TCO metrics (scaled by number of packages)
+    power_kw = hardware_cfg.get('power_kw', 0.0) * max_packages
+    tco_sec_usd = hardware_cfg.get('tco_sec_usd', 0.0) * max_packages
+    
+    # MFU placeholder (TODO: compute at layer level)
+    mfu = 0.37
 
     return {
         "ttft_ms": ttft_ms,
         "tpot_ms": tpot_ms,
+        "tps_user": tps_user,
         "throughput_tokens_s": throughput_tokens_s,
         "total_latency_ms": total_latency_ms,
         "memory": {
             "weight_memory_gb": total_weight_memory_gb,
             "activation_memory_gb": total_activation_memory_gb,
             "kv_cache_gb": total_kv_cache_gb,
-            "memory_per_chip_gb": memory_per_chip_gb,
+            "memory_per_package_gb": memory_per_package_gb,
             "hw_capacity_gb": hw_capacity_gb,
         },
         "system": {
-            "num_chips": max_chips,
+            "num_packages": max_packages,
+            "power_kw": power_kw,
+            "mfu": mfu,
+            "tco_sec_usd": tco_sec_usd,
             "bottleneck": bottleneck,
             "fits_on_hardware": fits_on_hardware,
         },

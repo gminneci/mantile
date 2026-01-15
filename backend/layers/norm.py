@@ -54,7 +54,7 @@ class NormLayer(Layer):
         self.param_count = hidden_size * (2 if has_bias else 1)
         super().__init__(layer_idx, dtype, parallelism)
     
-    def _get_num_chips(self) -> int:
+    def _get_num_packages(self) -> int:
         return 1
     
     def compute_flops(self, batch_size: int, seq_len: int, phase: Phase) -> int:

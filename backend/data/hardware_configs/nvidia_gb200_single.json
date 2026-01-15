@@ -2,10 +2,10 @@
   "name": "NVIDIA GB200 (Single Package)",
   "description": "Single GB200 package with 2 Blackwell GPUs + 1 Grace CPU. Specifications per package.",
   "manufacturer": "NVIDIA",
-  "compute": {
-    "fp16": 2500.0,
+  "compute_per_package_GFlops": {
     "bf16": 2500.0,
-    "fp8": 5000.0,
+    "nvfp8": 5000.0,
+    "nvfp4": 10000.0,
     "int8": 5000.0
   },
   "memory": [
@@ -13,6 +13,8 @@
   ],
   "interconnect_bandwidth_gbps": 900.0,
   "interconnect_latency_us": 0.20,
-  "chips_per_node": 2,
-  "nodes_per_cluster": 1
+  "power_kw": 1.0,
+  "tco_sec_usd": 0.0015,
+  "packages_per_domain": 1,
+  "domains_per_cluster": 1
 }

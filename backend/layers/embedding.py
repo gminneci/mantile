@@ -53,7 +53,7 @@ class EmbeddingLayer(Layer):
         # Embeddings are typically layer_idx=-1 (before transformer layers)
         super().__init__(layer_idx=-1, dtype=dtype, parallelism=parallelism)
     
-    def _get_num_chips(self) -> int:
+    def _get_num_packages(self) -> int:
         """Number of chips for embedding layer"""
         tp = self.parallelism.get("tensor_parallel", 1)
         return tp

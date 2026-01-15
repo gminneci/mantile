@@ -1,8 +1,8 @@
 {
-  "name": "Test chip (Single Package)",
+  "name": "Test chip (64 cluster)",
   "description": "Single chip used for testing purposes.",
   "manufacturer": "Test Manufacturer",
-  "compute": {
+  "compute_per_package_GFlops": {
     "fp16": 2500.0,
     "bf16": 2500.0,
     "fp8": 5000.0,
