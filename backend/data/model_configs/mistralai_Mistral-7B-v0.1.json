@@ -1,0 +1,69 @@
+{
+  "model_id": "mistralai_Mistral-7B-v0.1",
+  "hf_model_id": "mistralai/Mistral-7B-v0.1",
+  "name": "Mistral-7B-v0.1",
+  "hidden_size": 4096,
+  "num_layers": 32,
+  "vocab_size": 32000,
+  "total_params": 7241732096,
+  "total_params_formatted": "7.2B",
+  "layer_types": [
+    {
+      "name": "attention",
+      "class": "GroupedQueryAttentionLayer",
+      "count": 32,
+      "specs": {
+        "layer_idx": 0,
+        "input_dim": 4096,
+        "output_dim": 4096,
+        "parameter_count": 41943040,
+        "hidden_size": 4096,
+        "num_heads": 32,
+        "num_kv_heads": 8,
+        "head_dim": 128
+      }
+    },
+    {
+      "name": "feedforward",
+      "class": "GatedMLPLayer",
+      "count": 32,
+      "specs": {
+        "layer_idx": 0,
+        "input_dim": 4096,
+        "output_dim": 4096,
+        "parameter_count": 176160768,
+        "hidden_size": 4096,
+        "intermediate_size": 14336
+      }
+    },
+    {
+      "name": "norm",
+      "class": "NormLayer",
+      "count": 32,
+      "specs": {
+        "layer_idx": 0,
+        "input_dim": 4096,
+        "output_dim": 4096,
+        "parameter_count": 4096,
+        "hidden_size": 4096,
+        "has_bias": false
+      }
+    },
+    {
+      "name": "embedding",
+      "class": "EmbeddingLayer",
+      "count": 1,
+      "specs": {
+        "vocab_size": 32000,
+        "hidden_size": 4096,
+        "parameter_count": 131072000
+      }
+    }
+  ],
+  "validated": true,
+  "validation_notes": "Mistral 7B v0.1 (7.24B actual params), GQA (8 KV heads), SwiGLU MLP (14336 intermediate), 32 layers, sliding window attention (4096)",
+  "validation_sources": [
+    "https://huggingface.co/mistralai/Mistral-7B-v0.1",
+    "https://arxiv.org/abs/2310.06825"
+  ]
+}

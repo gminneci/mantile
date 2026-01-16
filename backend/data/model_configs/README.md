@@ -106,6 +106,10 @@ Available layer implementations (from `backend/layers/`):
   - 22 layers, GQA (4 KV heads), SwiGLU MLP (5632 intermediate)
   - 1.1B parameters
 
+- **mistralai_Mistral-7B-v0.1.json**: Mistral 7B v0.1
+  - 32 layers, GQA (8 KV heads), SwiGLU MLP (14336 intermediate)
+  - 7.2B parameters, sliding window attention (4096)
+
 ## Usage
 
 Model configs are loaded via the FastAPI endpoint:
@@ -128,12 +132,16 @@ for layer_type in model_cfg['layer_types']:
 ## Adding New Configurations
 
 1. Create a new JSON file in this directory
-2. Follow the format above (see existing configs for reference)
-3. Use descriptive `model_id`: `{family}_{size}_{variant}` (e.g., `llama_3_8b`, `mistral_7b_instruct`)
-4. Ensure `layer_types[].name` values are unique within the config
-5. Match `class` names exactly to layer implementations in `backend/layers/`
-6. Restart the backend to load the new config
-7. Test via `GET /models/{model_id}` endpoint
+2. **Naming convention**: Use the HuggingFace model ID with `/` replaced by `_`
+   - Example: `mistralai/Mistral-7B-v0.1` → `mistralai_Mistral-7B-v0.1.json`
+   - Example: `meta-llama/Llama-3.3-70B-Instruct` → `meta-llama_Llama-3.3-70B-Instruct.json`
+3. Follow the format above (see existing configs for reference)
+4. Set `model_id` to the filename without `.json` extension
+5. Set `hf_model_id` to the original HuggingFace model ID (with `/`)
+6. Ensure `layer_types[].name` values are unique within the config
+7. Match `class` names exactly to layer implementations in `backend/layers/`
+8. Restart the backend to load the new config
+9. Test via `GET /models/{model_id}` endpoint
 
 ## Validation
 
