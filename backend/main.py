@@ -12,12 +12,22 @@ from .layers import Phase, DataType
 MODELS_CFG_DIR = Path(__file__).parent / "data" / "model_configs"
 HARDWARE_CONFIGS_DIR = Path(__file__).parent / "data" / "hardware_configs"
 
-app = FastAPI()
+# Path prefix for deployment (e.g., /estimator-api)
+ROOT_PATH = os.getenv("ROOT_PATH", "")
+
+# CORS origins (comma-separated)
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+
+app = FastAPI(
+    root_path=ROOT_PATH,
+    title="Mantile API",
+    description="LLM Performance Estimation API"
+)
 
 # CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
