@@ -4,6 +4,57 @@
 
 ---
 
+## ⚠️ CRITICAL: File Boundary Rules
+
+**READ THIS BEFORE DOING ANYTHING ELSE.**
+
+You are operating in a restricted workspace. The following rules are **non-negotiable**:
+
+### Allowed Actions
+| Action | Allowed Location |
+|--------|------------------|
+| **Create** new files | `model_builder/agent_scratchpad/` **ONLY** |
+| **Modify** existing files | `model_builder/agent_scratchpad/` **ONLY** |
+| **Read** files | Anywhere in the repo (read-only) |
+
+### Forbidden Actions
+- ❌ **DO NOT** create files outside `model_builder/agent_scratchpad/`
+- ❌ **DO NOT** modify any file outside `model_builder/agent_scratchpad/`
+- ❌ **DO NOT** create test scripts, helper scripts, or temp files in any other directory
+- ❌ **DO NOT** modify `backend/`, `frontend/`, or root-level files without explicit user approval
+
+### Exception: Final Deliverables (User Approval Required)
+The following files may be created/modified **ONLY after explicit user approval**:
+- `backend/data/model_configs/{model_id}.json` — Final validated model config
+- `model_builder/gaps/{layer_type}.md` — Gap reports for unsupported layers
+
+**Before creating any deliverable**, you MUST:
+1. Show the user the complete file content you intend to write
+2. Wait for explicit approval (e.g., "yes", "approved", "go ahead")
+3. Only then create/modify the file
+
+### Scratchpad Usage
+Use `model_builder/agent_scratchpad/` for:
+- Test scripts (`test_*.py`)
+- Exploratory code
+- Temporary CSV/JSON exports
+- Debug outputs
+- Validation scripts
+
+Example:
+```bash
+# ✅ Correct
+model_builder/agent_scratchpad/test_attention.py
+model_builder/agent_scratchpad/tensors_debug.csv
+
+# ❌ Wrong - will pollute the repo
+test_attention.py
+backend/test_model.py
+scripts/temp_validate.py
+```
+
+---
+
 ## Quick Start (Read This First)
 
 **Your task**: Create a validated model config for a HuggingFace model.
@@ -12,7 +63,7 @@
 | Path | Purpose |
 |------|---------|
 | `model_builder/utils.py` | HF inspection & validation tools (run these first) |
-| `backend/data/model_configs/llama_3.3_70b.json` | Output template to follow |
+| `backend/data/model_configs/meta-llama_Llama-3.3-70B-Instruct.json` | Output template to follow |
 | `backend/layers/` | Supported layer implementations (inspect dynamically) |
 | `model_builder/gaps/` | Store gap reports for unsupported layers |
 
@@ -260,30 +311,135 @@ MoE Parallelism Strategies:
 
 #### 4.4 Test Suite Specification
 
-Specify minimal but comprehensive tests:
+Tests in Mantile are written in **Markdown format** with step-by-step calculations (see `tests/README.md`). Create a test file at `tests/{layer_type}_tests.md` following this structure:
 
-```python
-# Tests needed for MoERouterLayer
+```markdown
+# [Layer Type] Tests
 
-def test_moe_router_output_shape():
-    """Router should output (batch, seq_len, num_experts) routing weights"""
-    pass
+Conventions:
+* `bytes_per_elem = 2` (FP16/BF16)
+* `B=batch_size`, `S=seq_len`, `M=B*S`
+* **FLOPs for GEMM** `(M×K)@(K×N)` = `2*M*K*N`
+* **communication_bytes** = payload bytes (logical tensor size)
 
-def test_moe_router_top_k():
-    """Only top-k experts should have non-zero weights"""
-    pass
+---
 
-def test_moe_flops_calculation():
-    """FLOPs should account for: router + (top_k * expert_flops)"""
-    pass
+## Test [LAYER]-1: [Description]
 
-def test_moe_expert_parallelism():
-    """Memory and compute should split correctly across expert-parallel chips"""
-    pass
+### Test case parameters
 
-def test_moe_communication():
-    """All-to-All communication volume should be calculated correctly"""
-    pass
+* [param_1] = **[value]**
+* [param_2] = **[value]**
+* ...
+* num_chips = **[N]**
+* tensor_parallel `tp` = **[N]**
+
+Derived:
+* [derived_param] = [formula] = [value]
+
+### Expected calculations (step-by-step)
+
+#### 1) FLOPs
+
+**(a) [Operation name]**
+[Shape notation]: `X[M,K] @ W[K,N]`
+* FLOPs = `2 * M * K * N`
+* = `2 * [value] * [value] * [value] = [result]`
+
+**(b) [Next operation]**
+...
+
+**Total FLOPs**
+* `flops_total = [component_1] + [component_2] + ...`
+* = `[value] + [value] = [total]`
+
+#### 2) Memory
+
+**(a) Weights**
+* [weight_name]: `[shape]` → `[elements] * bytes_per_elem = [bytes]`
+
+**(b) Activations**
+...
+
+**Total Memory**
+* `memory_total = weights + activations`
+* = `[value] bytes = [value] GB`
+
+#### 3) Communication (if applicable)
+
+**(a) [Communication type]**
+* Payload: `[shape]` → `[bytes]`
+* Pattern: [all-reduce / all-gather / all-to-all]
+
+### Expected Behavior
+
+* Memory per chip: ~[X] GB
+* Compute time: ~[X] ms
+* Communication time: ~[X] ms
+
+### Rationale
+
+[Explanation of why these values are expected, any assumptions made]
+```
+
+**Example for MoE layer** (save to `tests/moe_tests.md`):
+
+```markdown
+## Test MOE-1: MoE Router + Experts, single chip
+
+### Test case parameters
+
+* hidden_size `d` = **4096**
+* num_experts `E` = **8**
+* top_k = **2**
+* expert_intermediate `di` = **14336**
+* batch_size `B` = **1**
+* seq_len `S` = **2048**
+* bytes_per_elem = **2**
+* num_chips = **1**
+
+Derived:
+* `M = B*S = 2048` tokens
+
+### Expected calculations (step-by-step)
+
+#### 1) FLOPs
+
+**(a) Router gating**
+`X[M,d] @ W_gate[d,E]`:
+* FLOPs = `2 * M * d * E`
+* = `2 * 2048 * 4096 * 8 = 134,217,728`
+
+**(b) Expert MLP (per active expert)**
+Each token routed to top_k=2 experts.
+Per expert (gated MLP): `3 * 2 * M * d * di`
+* = `3 * 2 * 2048 * 4096 * 14336 = 722,204,057,600` per expert
+* Total for top_k=2: `2 * 722,204,057,600 = 1,444,408,115,200`
+
+**Total FLOPs**
+* = `134,217,728 + 1,444,408,115,200 = 1,444,542,332,928`
+
+#### 2) Memory
+
+**(a) Router weights**
+* `W_gate[d,E]`: `4096 * 8 * 2 = 65,536 bytes`
+
+**(b) Expert weights (all 8 experts)**
+* Per expert: `3 * d * di * 2 = 3 * 4096 * 14336 * 2 = 352,321,536 bytes`
+* All experts: `8 * 352,321,536 = 2,818,572,288 bytes = 2.62 GB`
+
+**Total Memory**
+* = `65,536 + 2,818,572,288 = 2,818,637,824 bytes ≈ 2.62 GB`
+
+### Expected Behavior
+
+* Memory per chip: ~2.62 GB (weights only)
+* Compute time: depends on hardware FLOP/s
+
+### Rationale
+
+MoE routes each token to top_k experts. Router is a small linear layer.
+Only top_k experts compute per token, but all expert weights must be stored.
 ```
 
 ---

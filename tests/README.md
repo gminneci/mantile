@@ -44,7 +44,7 @@ See [attention_tests.md](attention_tests.md) for a complete example:
 ## Test 1: Llama 3.3 70B Attention on NVL-72
 
 ### Configuration
-- Model: llama_3.3_70b
+- Model: meta-llama_Llama-3.3-70B-Instruct
 - Hardware: nvidia_nvl72_rack
 - Batch Size: 1
 - Sequence Length: 2048

@@ -69,11 +69,11 @@ Load a specific hardware configuration.
 Get layer type information for a model, including supported parallelism strategies.
 
 **Query Parameters:**
-- `model_id`: Model identifier (e.g., `llama_3.3_70b`, `tinyllama_1.1b`)
+- `model_id`: Model identifier (e.g., `meta-llama_Llama-3.3-70B-Instruct`, `TinyLlama_TinyLlama-1.1B-Chat-v1.0`)
 
 **Example:**
 ```bash
-curl "http://localhost:8000/api/layers?model_id=llama_3.3_70b"
+curl "http://localhost:8000/api/layers?model_id=meta-llama_Llama-3.3-70B-Instruct"
 ```
 
 **Response:**
@@ -117,7 +117,7 @@ Compute complete system-level metrics for both prefill and decode phases.
 ```json
 {
   "prefill_req": {
-    "model_id": "llama_3.3_70b",
+    "model_id": "meta-llama_Llama-3.3-70B-Instruct",
     "hardware_id": "nvidia_nvl72_rack",
     "batch_size": 128,
     "seq_len": 1024,
@@ -143,7 +143,7 @@ Compute complete system-level metrics for both prefill and decode phases.
     }
   },
   "decode_req": {
-    "model_id": "llama_3.3_70b",
+    "model_id": "meta-llama_Llama-3.3-70B-Instruct",
     "hardware_id": "nvidia_nvl72_rack",
     "batch_size": 128,
     "seq_len": 1024,
@@ -185,7 +185,7 @@ curl -X POST http://localhost:8000/config/system-metrics \
   -H 'Content-Type: application/json' \
   -d '{
     "prefill_req": {
-      "model_id": "llama_3.3_70b",
+      "model_id": "meta-llama_Llama-3.3-70B-Instruct",
       "hardware_id": "nvidia_nvl72_rack",
       "batch_size": 128,
       "seq_len": 1024,
@@ -197,7 +197,7 @@ curl -X POST http://localhost:8000/config/system-metrics \
       }
     },
     "decode_req": {
-      "model_id": "llama_3.3_70b",
+      "model_id": "meta-llama_Llama-3.3-70B-Instruct",
       "hardware_id": "nvidia_nvl72_rack",
       "batch_size": 128,
       "seq_len": 1024,
@@ -220,7 +220,6 @@ The backend is organized into modular layers:
 ```
 backend/
 ├── main.py              # FastAPI app and endpoints
-├── ir_builder.py        # Model IR generation from HuggingFace
 ├── layers/              # Layer implementations
 │   ├── base.py          # Base Layer class
 │   ├── attention.py     # Attention layer

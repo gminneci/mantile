@@ -42,3 +42,7 @@ htmlcov/
 node_modules/
 frontend/dist/
 frontend/.vite/
+
+# Agent scratchpad (temporary files created by AI agents)
+model_builder/agent_scratchpad/
+!model_builder/agent_scratchpad/README.md

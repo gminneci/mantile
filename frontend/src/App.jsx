@@ -40,7 +40,7 @@ export default function App() {
   
   // STATE STRUCTURE: model (system), prefill/decode (phase), layerConfigs (per-type)
   const [config, setConfig] = useState({
-    model: 'llama_3.3_70b', // System level: model ID only
+    model: 'meta-llama_Llama-3.3-70B-Instruct', // System level: model ID only
     prefill: {
       hardware: 'nvidia_nvl72_rack',
       batchSize: 128,
@@ -569,8 +569,10 @@ export default function App() {
               className="input-field"
             >
               <option value="">Select a model...</option>
-              <option value="tinyllama_1.1b">TinyLlama 1.1B Chat</option>
-              <option value="llama_3.3_70b">Llama 3.3 70B Instruct</option>
+              <option value="TinyLlama_TinyLlama-1.1B-Chat-v1.0">TinyLlama 1.1B Chat</option>
+              <option value="mistralai_Mistral-7B-v0.1">Mistral 7B v0.1</option>
+              <option value="meta-llama_Llama-3.3-70B-Instruct">Llama 3.3 70B Instruct</option>
+              <option value="meta-llama_Llama-3.1-405B-Instruct">Llama 3.1 405B Instruct</option>
             </select>
           </div>
 
@@ -1016,8 +1018,10 @@ export default function App() {
                 className="input-field"
               >
                 <option value="">Select a model...</option>
-                <option value="tinyllama_1.1b">TinyLlama 1.1B Chat</option>
-                <option value="llama_3.3_70b">Llama 3.3 70B Instruct</option>
+                <option value="TinyLlama_TinyLlama-1.1B-Chat-v1.0">TinyLlama 1.1B Chat</option>
+                <option value="mistralai_Mistral-7B-v0.1">Mistral 7B v0.1</option>
+                <option value="meta-llama_Llama-3.3-70B-Instruct">Llama 3.3 70B Instruct</option>
+                <option value="meta-llama_Llama-3.1-405B-Instruct">Llama 3.1 405B Instruct</option>
               </select>
             </div>
 

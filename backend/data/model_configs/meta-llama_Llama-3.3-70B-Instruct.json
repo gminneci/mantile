@@ -1,5 +1,5 @@
 {
-  "model_id": "llama_3.3_70b",
+  "model_id": "meta-llama_Llama-3.3-70B-Instruct",
   "hf_model_id": "meta-llama/Llama-3.3-70B-Instruct",
   "name": "Llama-3.3-70B-Instruct",
   "hidden_size": 8192,

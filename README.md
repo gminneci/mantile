@@ -70,7 +70,7 @@ The backend provides a stateless REST API for computing LLM inference metrics. A
 **Quick example:**
 ```bash
 # Get layer information for a model
-curl "http://localhost:8000/api/layers?model_id=llama_3.3_70b" | jq
+curl "http://localhost:8000/api/layers?model_id=meta-llama_Llama-3.3-70B-Instruct" | jq
 
 # Compute system metrics for prefill + decode
 curl -X POST http://localhost:8000/config/system-metrics \
@@ -102,10 +102,8 @@ The frontend is a React application built with Vite, providing an interactive UI
 - [ ] Support layer-by-layer profiling to identify optimization opportunities
 
 ### Validation & Calibration
-- [ ] Validate predictions against real inference frameworks (InferenceMax, vLLM, TGI)
-- [ ] Calibrate model FLOPs utilization (MFU) based on empirical measurements
-- [ ] Add roofline model analysis for compute vs memory-bound identification
-- [ ] Benchmark against production inference systems for accuracy validation
+- [ ] Validate predictions against real inference frameworks and public data
+- [ ] Calibrate model FLOPs utilization (MFU)
 
 ### Agentic IR Builder
 - [ ] Make IR builder autonomous: automatically infer model architectures from HuggingFace configs

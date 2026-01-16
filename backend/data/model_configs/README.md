@@ -98,11 +98,15 @@ Available layer implementations (from `backend/layers/`):
 
 ## Available Configurations
 
-- **llama_3.3_70b.json**: Meta Llama 3.3 70B Instruct
+- **meta-llama_Llama-3.1-405B-Instruct.json**: Meta Llama 3.1 405B Instruct
+  - 126 layers, GQA (8 KV heads), SwiGLU MLP (53248 intermediate)
+  - 405.9B parameters
+
+- **meta-llama_Llama-3.3-70B-Instruct.json**: Meta Llama 3.3 70B Instruct
   - 80 layers, GQA (8 KV heads), SwiGLU MLP (28672 intermediate)
   - 69.5B parameters
 
-- **tinyllama_1.1b.json**: TinyLlama 1.1B Chat
+- **TinyLlama_TinyLlama-1.1B-Chat-v1.0.json**: TinyLlama 1.1B Chat
   - 22 layers, GQA (4 KV heads), SwiGLU MLP (5632 intermediate)
   - 1.1B parameters
 
@@ -118,8 +122,8 @@ Model configs are loaded via the FastAPI endpoint:
 # GET /models/{model_id}
 # Returns the JSON config as a dict
 
-# Example: Load llama_3.3_70b
-model_cfg = load_model_config("llama_3.3_70b")
+# Example: Load Llama 3.3 70B
+model_cfg = load_model_config("meta-llama_Llama-3.3-70B-Instruct")
 
 # Access layer specifications:
 for layer_type in model_cfg['layer_types']:
