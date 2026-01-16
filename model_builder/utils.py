@@ -2,10 +2,12 @@
 Utilities for inspecting HuggingFace models and extracting architecture information.
 
 These tools enable model config generation without downloading full model weights.
+For gated models, set the HF_TOKEN environment variable or pass token parameter.
 
 Functions:
     get_model_config: Fetch HF config (no weight download)
     inspect_model_structure: Dry-run tensor inspection with empty weights
+    compute_tensor_shapes_from_config: Fast tensor shape computation (no model loading)
     save_tensor_inspection: Export tensors to CSV/JSON
     analyze_layer_structure: Infer architecture from tensor names
     format_tensor_sample: Format tensors for documentation
@@ -16,6 +18,12 @@ Functions:
     estimate_memory: Estimate memory footprint in bytes
     get_supported_layers: Dynamically list Mantile layer classes
     validate_config: Cross-check computed vs expected values
+
+Authentication:
+    For gated models (e.g., Llama, Gemma), either:
+    - Set HF_TOKEN environment variable
+    - Pass token parameter to functions
+    - Run: huggingface-cli login
 """
 
 from typing import Dict, List, Tuple, Any, Optional
@@ -24,7 +32,8 @@ from pathlib import Path
 
 __all__ = [
     'get_model_config',
-    'inspect_model_structure', 
+    'inspect_model_structure',
+    'compute_tensor_shapes_from_config',
     'save_tensor_inspection',
     'analyze_layer_structure',
     'format_tensor_sample',
@@ -37,10 +46,25 @@ __all__ = [
 ]
 
 
+def _get_hf_token(token: Optional[str] = None) -> Optional[str]:
+    """
+    Get HuggingFace token from argument or environment.
+    
+    Args:
+        token: Explicit token (takes precedence)
+        
+    Returns:
+        Token string or None if not available
+    """
+    import os
+    return token or os.getenv("HF_TOKEN")
+
+
 def get_model_config(
     model_id: str,
     trust_remote_code: bool = True,
-    output_path: Optional[Path] = None
+    output_path: Optional[Path] = None,
+    token: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Fetch model configuration from HuggingFace Hub.
@@ -52,6 +76,7 @@ def get_model_config(
         model_id: HuggingFace model ID (e.g., "meta-llama/Llama-3.3-70B-Instruct")
         trust_remote_code: Whether to trust remote code from HF (required for some models)
         output_path: Optional path to save config JSON file
+        token: HuggingFace token for gated models (or set HF_TOKEN env var)
         
     Returns:
         Dictionary containing model configuration parameters
@@ -65,7 +90,8 @@ def get_model_config(
     """
     from transformers import AutoConfig
     
-    config = AutoConfig.from_pretrained(model_id, trust_remote_code=trust_remote_code)
+    hf_token = _get_hf_token(token)
+    config = AutoConfig.from_pretrained(model_id, trust_remote_code=trust_remote_code, token=hf_token)
     config_dict = json.loads(config.to_json_string())
     
     if output_path:
@@ -80,7 +106,8 @@ def get_model_config(
 def inspect_model_structure(
     model_id: str,
     trust_remote_code: bool = True,
-    use_empty_weights: bool = True
+    use_empty_weights: bool = True,
+    token: Optional[str] = None
 ) -> List[Tuple[str, str, Tuple[int, ...], str]]:
     """
     Inspect model structure without downloading weights (dry run).
@@ -92,6 +119,7 @@ def inspect_model_structure(
         model_id: HuggingFace model ID (e.g., "meta-llama/Llama-3.3-70B-Instruct")
         trust_remote_code: Whether to trust remote code from HF
         use_empty_weights: If True, use empty weights (no download). If False, download full model.
+        token: HuggingFace token for gated models (or set HF_TOKEN env var)
         
     Returns:
         List of tuples: (kind, name, shape, dtype)
@@ -110,8 +138,10 @@ def inspect_model_structure(
     """
     from transformers import AutoConfig, AutoModelForCausalLM
     
+    hf_token = _get_hf_token(token)
+    
     # Get config first
-    config = AutoConfig.from_pretrained(model_id, trust_remote_code=trust_remote_code)
+    config = AutoConfig.from_pretrained(model_id, trust_remote_code=trust_remote_code, token=hf_token)
     
     # Load model with or without weights
     if use_empty_weights:
