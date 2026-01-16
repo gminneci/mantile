@@ -1,0 +1,67 @@
+{
+    "model_id": "openai_GPT-OSS-120B",
+    "hf_model_id": "openai/gpt-oss-120b",
+    "name": "GPT-OSS-120B",
+    "hidden_size": 2880,
+    "num_layers": 36,
+    "vocab_size": 201088,
+    "total_params": 116829156672,
+    "total_params_formatted": "116.8B",
+    "layer_types": [
+        {
+            "name": "attention",
+            "class": "GroupedQueryAttentionLayer",
+            "count": 36,
+            "supported": false,
+            "gap_report": "See model_builder/gaps/attention_gaps_gpt_oss.md",
+            "specs": {
+                "layer_idx": 0,
+                "hidden_size": 2880,
+                "num_heads": 32,
+                "num_kv_heads": 4,
+                "head_dim": 128,
+                "parameter_count": 33177600
+            }
+        },
+        {
+            "name": "feedforward",
+            "class": "GatedMLPLayer",
+            "count": 36,
+            "supported": false,
+            "gap_report": "See model_builder/gaps/moe_gpt_oss.md",
+            "specs": {
+                "num_experts": 128,
+                "top_k": 4,
+                "hidden_size": 2880,
+                "intermediate_size": 2880,
+                "parameter_count": 3209587200
+            }
+        },
+        {
+            "name": "norm",
+            "class": "NormLayer",
+            "count": 72,
+            "supported": true,
+            "specs": {
+                "hidden_size": 2880,
+                "parameter_count": 2880
+            }
+        },
+        {
+            "name": "embedding",
+            "class": "EmbeddingLayer",
+            "count": 1,
+            "supported": true,
+            "specs": {
+                "vocab_size": 201088,
+                "hidden_size": 2880,
+                "parameter_count": 579133440
+            }
+        }
+    ],
+    "validated": true,
+    "validation_notes": "Extracted via HF AutoConfig and dry-run tensor inspection. Confirmed 116.8B params. Both Attention and MoE layers marked as unsupported due to non-standard architecture (SWA, YaRN, 128 Experts, Bias).",
+    "validation_sources": [
+        "https://huggingface.co/openai/gpt-oss-120b"
+    ]
+}
