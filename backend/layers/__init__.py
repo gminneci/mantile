@@ -80,8 +80,12 @@ from .base import Layer, Phase, DataType, LayerMetrics
 # MLP layers
 from .mlp import MLPLayer, GatedMLPLayer
 
+# MoE layers
+from .moe import MoELayer
+
 # Attention layers
 from .attention import AttentionLayer, GroupedQueryAttentionLayer
+from .swa import SlidingWindowAttentionLayer
 
 # Normalization layers
 from .norm import NormLayer
@@ -98,9 +102,12 @@ __all__ = [
     # MLP layers
     "MLPLayer",
     "GatedMLPLayer",
+    # MoE layers
+    "MoELayer",
     # Attention layers
     "AttentionLayer",
     "GroupedQueryAttentionLayer",
+    "SlidingWindowAttentionLayer",
     # Normalization layers
     "NormLayer",
     # Embedding layers

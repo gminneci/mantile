@@ -29,9 +29,15 @@ report = generate_gap_report_template(
 
 ## Reports
 
-| Layer Type | Status | File |
-|------------|--------|------|
-| *No gaps yet* | - | - |
+| Layer Type | Model | Severity | Status | File |
+|------------|-------|----------|--------|------|
+| *(no open gaps)* | | | | |
 
-When a gap report is created, add it to this table and link from the model config's
+When a gap report is created, **add it to this table** and link from the model config's
 `gap_report` field.
+
+## Gap Severity Levels
+
+- **HIGH**: Core layer type unsupported (MoE, cross-attention, new architecture)
+- **MEDIUM**: Variant of supported layer (sliding window, different normalization)
+- **LOW**: Minor feature difference (biases, scaling factors, tied weights)

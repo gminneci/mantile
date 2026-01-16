@@ -10,25 +10,26 @@
     "layer_types": [
         {
             "name": "attention",
-            "class": "GroupedQueryAttentionLayer",
+            "class": "SlidingWindowAttentionLayer",
             "count": 36,
-            "supported": false,
-            "gap_report": "See model_builder/gaps/attention_gaps_gpt_oss.md",
+            "supported": true,
             "specs": {
                 "layer_idx": 0,
                 "hidden_size": 2880,
-                "num_heads": 32,
+                "num_query_heads": 32,
                 "num_kv_heads": 4,
                 "head_dim": 128,
-                "parameter_count": 33177600
+                "sliding_window": 128,
+                "num_sinks": 64,
+                "has_bias": true,
+                "parameter_count": 26550080
             }
         },
         {
             "name": "feedforward",
-            "class": "GatedMLPLayer",
+            "class": "MoELayer",
             "count": 36,
-            "supported": false,
-            "gap_report": "See model_builder/gaps/moe_gpt_oss.md",
+            "supported": true,
             "specs": {
                 "num_experts": 128,
                 "top_k": 4,
@@ -60,7 +61,7 @@
         }
     ],
     "validated": true,
-    "validation_notes": "Extracted via HF AutoConfig and dry-run tensor inspection. Confirmed 116.8B params. Both Attention and MoE layers marked as unsupported due to non-standard architecture (SWA, YaRN, 128 Experts, Bias).",
+    "validation_notes": "Extracted via HF AutoConfig and dry-run tensor inspection. Confirmed 116.8B params. All layers fully supported including SlidingWindowAttentionLayer (SWA + sinks + bias) and MoELayer (128 experts, top_k=4).",
     "validation_sources": [
         "https://huggingface.co/openai/gpt-oss-120b"
     ]

@@ -671,7 +671,7 @@ Derived:
 * `M = 256` tokens
 * `E_routed_local = 8 / 8 = 1` routed expert per EP group
 * `d_ff_local = 4096 / 4 = 1024` per TP rank
-* Routed token-expert pairs per chip = `(k * M) / (ep * tp) = 512 / 32 = 16`
+* Routed token-expert pairs per EP group = `(k * M) / ep = 512 / 8 = 64`
 * Shared expert tokens per chip = `M / tp = 64` (shared across EP, TP-sharded)
 
 ### Expected calculations (step-by-step)
@@ -732,14 +732,14 @@ Shared experts are replicated across EP groups:
 
 * Input x: 524,288 bytes
 * Router logits: 4,096 bytes
-* Routed expert intermediate: `16 * d_ff_local = 16 * 1024 = 16,384` elems -> 32,768 bytes
+* Routed expert intermediate: `(k*M/ep) * d_ff_local = 64 * 1024 = 65,536` elems -> 131,072 bytes
 * Shared expert intermediate: `64 * d_ff_local = 65,536` elems -> 131,072 bytes
 * Output y: 524,288 bytes
 
 Total:
 
-* **activation_memory_per_chip = 524,288 + 4,096 + 32,768 + 131,072 + 524,288 = 1,216,512**
-* **activation_memory_total = 32 * 1,216,512 = 38,928,384**
+* **activation_memory_per_chip = 524,288 + 4,096 + 131,072 + 131,072 + 524,288 = 1,314,816**
+* **activation_memory_total = 32 * 1,314,816 = 42,074,112**
 
 #### 4) KV cache
 
@@ -772,14 +772,14 @@ Assuming shared computed in parallel (TP-sharded) and no EP broadcast needed:
 
 * flops_per_chip: **541065216**
 * weight_memory_per_chip: **12599296**
-* activation_memory_per_chip: **1216512**
+* activation_memory_per_chip: **1314816**
 * kv_cache_per_chip: **0**
 
 **Aggregate metrics**
 
 * flops_total: **17314086912**
 * weight_memory_total: **403177472**
-* activation_memory_total: **38928384**
+* activation_memory_total: **42074112**
 * kv_cache_total: **0**
 
 **Hardware-dependent (optional)**
@@ -1047,12 +1047,12 @@ Router typically includes auxiliary losses (load balancing, entropy). These add 
 
 ### Gated Experts (SwiGLU-style)
 
-Modern MoE often uses gated FFN (3 projections instead of 2):
-- Up projection + gate projection + down projection
+Modern MoE uses gated FFN (3 projections instead of 2):
+- Gate projection + up projection + down projection
 - FLOPs = `6 * tokens * d * d_ff` instead of `4 * tokens * d * d_ff`
-- Weight memory increases by 50%
+- Weight memory: `3 * d * d_ff` per expert instead of `2 * d * d_ff`
 
-Future test: MOE with gated experts could be added.
+See GMOE-1 through GMOE-4 tests below.
 
 ### Communication Overlap
 
@@ -1060,6 +1060,463 @@ All-to-all communication can often be overlapped with computation:
 - Dispatch overlapped with router computation
 - Expert compute overlapped with other experts' dispatch
 - These optimizations don't change total bytes, but affect latency
+
+---
+
+# Gated MoE Tests (SwiGLU-style)
+
+These tests use **3-projection gated experts** (gate + up + down), as found in modern MoE architectures like Mixtral, DeepSeek, and GPT-OSS.
+
+## Gated MoE Conventions
+
+**FLOPs Calculation:**
+- Router: `2 * M * d * E` (same as standard MoE)
+- Per expert gated FFN: `gate + up + down = 6 * tokens * d * d_ff`
+- Total expert FLOPs with top-k: `6 * k * M * d * d_ff`
+
+**Weight Memory:**
+- Router: `d * E` elements (same)
+- Per expert: `gate_proj + up_proj + down_proj = 3 * d * d_ff` elements
+- Total experts: `E * 3 * d * d_ff` elements
+
+## Gated MoE Test Summary
+
+| Test | Config | Experts | Top-k | Hidden | d_ff | Batch | Seq | FLOPs/chip | Weight/chip | Comm |
+|------|--------|---------|-------|--------|------|-------|-----|------------|-------------|------|
+| GMOE-1 | Single chip | 8 | 2 | 1024 | 4096 | 2 | 128 | 12,889,096,192 | 201,342,976 | 0 |
+| GMOE-2 | EP=4 | 8 | 2 | 1024 | 4096 | 2 | 128 | 3,225,419,776 | 50,348,032 | 1,048,576 |
+| GMOE-3 | TP=4 | 8 | 2 | 1024 | 4096 | 2 | 128 | 3,225,419,776 | 50,348,032 | 524,288 |
+| GMOE-4 | EP=4, TP=2 | 8 | 2 | 1024 | 4096 | 2 | 128 | 1,614,807,040 | 25,182,208 | 1,310,720 |
+
+---
+
+# Test GMOE-1 — Gated MoE Single Chip (baseline)
+
+### Test case parameters
+
+* hidden_size `d` = **1024**
+* intermediate_size `d_ff` = **4096**
+* num_experts `E` = **8**
+* top_k `k` = **2**
+* batch_size `B` = **2**
+* seq_len `S` = **128**
+* bytes_per_elem = **2**
+* num_chips = **1**
+* expert_parallel `ep` = **1**
+* tensor_parallel `tp` = **1**
+* **gated** = **true** (3 projections per expert)
+
+Derived:
+
+* `M = B*S = 256` tokens
+* Total expert invocations = `k * M = 512`
+
+### Expected calculations (step-by-step)
+
+#### 1) FLOPs
+
+**(a) Router**
+Linear projection `x[M,d] @ W_router[d,E]`:
+
+* FLOPs = `2 * M * d * E`
+* = `2 * 256 * 1024 * 8`
+* = `4,194,304`
+
+**(b) Expert gated FFN computation**
+Each token is processed by `k=2` experts. Using the gated formula `6 * k * M * d * d_ff`:
+
+* Expert FLOPs = `6 * k * M * d * d_ff`
+* = `6 * 2 * 256 * 1024 * 4096`
+* = `12,884,901,888`
+
+**(c) Total FLOPs**
+
+* Router + Experts = `4,194,304 + 12,884,901,888`
+* **flops_total = 12,889,096,192**
+* **flops_per_chip = 12,889,096,192**
+
+#### 2) Weight memory
+
+**(a) Router weights**
+
+* Elements = `d * E = 1024 * 8 = 8,192`
+* Bytes = `8,192 * 2 = 16,384`
+
+**(b) Expert weights (gated)**
+Each expert has W_gate[d, d_ff], W_up[d, d_ff], and W_down[d_ff, d]:
+
+* Elements per expert = `3 * d * d_ff = 3 * 1024 * 4096 = 12,582,912`
+* Total for E=8 experts = `8 * 12,582,912 = 100,663,296`
+* Bytes = `100,663,296 * 2 = 201,326,592`
+
+**(c) Total weights**
+
+* Total bytes = `16,384 + 201,326,592 = 201,342,976`
+
+So:
+
+* **weight_memory_per_chip = 201,342,976**
+* **weight_memory_total = 201,342,976**
+
+#### 3) Activation memory (resident, minimal)
+
+For inference, minimal resident buffers:
+
+* Input `x`: `M * d = 256 * 1024 = 262,144` elems -> `524,288` bytes
+* Router logits: `M * E = 256 * 8 = 2,048` elems -> `4,096` bytes
+* Expert intermediate (peak, one expert batch at a time): `M * d_ff = 256 * 4096 = 1,048,576` elems -> `2,097,152` bytes
+* Output `y`: `M * d = 262,144` elems -> `524,288` bytes
+
+Total:
+
+* **activation_memory_per_chip = 524,288 + 4,096 + 2,097,152 + 524,288 = 3,149,824**
+* **activation_memory_total = 3,149,824**
+
+#### 4) KV cache
+
+* Not applicable for MoE FFN layers: **0**
+
+#### 5) Communication
+
+* Single chip, no parallelism: **0**
+
+### Expected results
+
+**Per-chip metrics**
+
+* flops_per_chip: **12889096192**
+* weight_memory_per_chip: **201342976**
+* activation_memory_per_chip: **3149824**
+* kv_cache_per_chip: **0**
+
+**Aggregate metrics**
+
+* flops_total: **12889096192**
+* weight_memory_total: **201342976**
+* activation_memory_total: **3149824**
+* kv_cache_total: **0**
+
+**Hardware-dependent (optional)**
+
+* communication_bytes: **0**
+
+---
+
+# Test GMOE-2 — Gated MoE Expert Parallel (EP=4)
+
+### Assumptions (explicit)
+
+* **EP shards experts**: each chip holds `E_local = E/ep = 2` experts
+* Tokens routed via all-to-all dispatch/combine
+* Router is replicated on all chips
+
+### Test case parameters
+
+Same as GMOE-1, plus:
+
+* expert_parallel `ep` = **4**
+* num_chips = **4**
+
+Derived:
+
+* `E_local = 8 / 4 = 2` experts per chip
+* Token-expert pairs per chip = `k * M / ep = 512 / 4 = 128`
+
+### Expected calculations (step-by-step)
+
+#### 1) FLOPs
+
+**(a) Router (replicated)**
+
+* Router FLOPs per chip = `4,194,304`
+
+**(b) Expert computation**
+Total expert FLOPs split across EP:
+
+* Total gated expert FLOPs = `12,884,901,888`
+* Per chip = `12,884,901,888 / 4 = 3,221,225,472`
+
+**(c) Total**
+
+* **flops_per_chip = 4,194,304 + 3,221,225,472 = 3,225,419,776**
+* **flops_total = 4 * 3,225,419,776 = 12,901,679,104**
+
+#### 2) Weight memory
+
+**(a) Router (replicated)**
+
+* Bytes per chip = `16,384`
+
+**(b) Expert weights (EP-sharded, gated)**
+
+* Per chip = `E_local * 3 * d * d_ff * bytes`
+* = `2 * 3 * 1024 * 4096 * 2 = 50,331,648`
+
+**(c) Total**
+
+* **weight_memory_per_chip = 16,384 + 50,331,648 = 50,348,032**
+* **weight_memory_total = 4 * 50,348,032 = 201,392,128**
+
+#### 3) Activation memory
+
+* Input x (replicated): 524,288 bytes
+* Router logits: 4,096 bytes
+* Expert intermediate (EP local): `(k*M/ep) * d_ff = 128 * 4096 = 524,288` elems -> 1,048,576 bytes
+* Output y: 524,288 bytes
+
+Total:
+
+* **activation_memory_per_chip = 524,288 + 4,096 + 1,048,576 + 524,288 = 2,101,248**
+* **activation_memory_total = 4 * 2,101,248 = 8,404,992**
+
+#### 4) KV cache
+
+* **kv_cache_per_chip = 0**
+* **kv_cache_total = 0**
+
+#### 5) Communication
+
+EP all-to-all (dispatch + combine):
+
+* Payload = `2 * M * d * bytes = 2 * 256 * 1024 * 2 = 1,048,576`
+* **communication_bytes = 1,048,576**
+
+### Expected results
+
+**Per-chip metrics**
+
+* flops_per_chip: **3225419776**
+* weight_memory_per_chip: **50348032**
+* activation_memory_per_chip: **2101248**
+* kv_cache_per_chip: **0**
+
+**Aggregate metrics**
+
+* flops_total: **12901679104**
+* weight_memory_total: **201392128**
+* activation_memory_total: **8404992**
+* kv_cache_total: **0**
+
+**Hardware-dependent (optional)**
+
+* communication_bytes: **1048576**
+
+---
+
+# Test GMOE-3 — Gated MoE Tensor Parallel (TP=4)
+
+### Assumptions (explicit)
+
+* **TP shards each expert's FFN**: each chip holds `d_ff_local = d_ff/tp` of every expert
+* All experts remain on all chips, but intermediate dimension is sharded
+* TP all-reduce required after expert computation
+
+### Test case parameters
+
+Same as GMOE-1, plus:
+
+* tensor_parallel `tp` = **4**
+* num_chips = **4**
+
+Derived:
+
+* `d_ff_local = 4096 / 4 = 1024`
+* All 8 experts on each chip, but TP-sharded
+
+### Expected calculations (step-by-step)
+
+#### 1) FLOPs
+
+**(a) Router (replicated)**
+
+* Router FLOPs per chip = `4,194,304`
+
+**(b) Expert computation**
+Total expert FLOPs split across TP:
+
+* Total gated expert FLOPs = `12,884,901,888`
+* Per chip = `12,884,901,888 / 4 = 3,221,225,472`
+
+**(c) Total**
+
+* **flops_per_chip = 4,194,304 + 3,221,225,472 = 3,225,419,776**
+* **flops_total = 4 * 3,225,419,776 = 12,901,679,104**
+
+#### 2) Weight memory
+
+**(a) Router (replicated)**
+
+* Bytes per chip = `16,384`
+
+**(b) Expert weights (TP-sharded, gated)**
+
+* Per chip = `E * 3 * d * (d_ff/tp) * bytes`
+* = `8 * 3 * 1024 * 1024 * 2 = 50,331,648`
+
+**(c) Total**
+
+* **weight_memory_per_chip = 16,384 + 50,331,648 = 50,348,032**
+* **weight_memory_total = 201,342,976** (unique weights, sharded not replicated)
+
+#### 3) Activation memory
+
+* Input x (replicated): 524,288 bytes
+* Router logits: 4,096 bytes
+* Expert intermediate (TP-sharded): `M * (d_ff/tp) = 256 * 1024 = 262,144` elems -> 524,288 bytes
+* Output y: 524,288 bytes
+
+Total:
+
+* **activation_memory_per_chip = 524,288 + 4,096 + 524,288 + 524,288 = 1,576,960**
+* **activation_memory_total = 4 * 1,576,960 = 6,307,840**
+
+#### 4) KV cache
+
+* **kv_cache_per_chip = 0**
+* **kv_cache_total = 0**
+
+#### 5) Communication
+
+TP all-reduce on expert outputs:
+
+* Payload = `M * d * bytes = 256 * 1024 * 2 = 524,288`
+* **communication_bytes = 524,288**
+
+### Expected results
+
+**Per-chip metrics**
+
+* flops_per_chip: **3225419776**
+* weight_memory_per_chip: **50348032**
+* activation_memory_per_chip: **1576960**
+* kv_cache_per_chip: **0**
+
+**Aggregate metrics**
+
+* flops_total: **12901679104**
+* weight_memory_total: **201342976**
+* activation_memory_total: **6307840**
+* kv_cache_total: **0**
+
+**Hardware-dependent (optional)**
+
+* communication_bytes: **524288**
+
+---
+
+# Test GMOE-4 — Gated MoE Hybrid EP×TP (EP=4, TP=2)
+
+### Assumptions (explicit)
+
+* **EP shards experts**: each EP group holds `E_local = E/ep = 2` experts
+* **TP shards each expert**: within each EP group, experts are TP-sharded
+* Total chips = `ep * tp = 8`
+* Communication: EP all-to-all + TP all-reduce within each EP group
+
+### Test case parameters
+
+Same as GMOE-1, plus:
+
+* expert_parallel `ep` = **4**
+* tensor_parallel `tp` = **2**
+* num_chips = **8**
+
+Derived:
+
+* `E_local = 8 / 4 = 2` experts per EP group
+* `d_ff_local = 4096 / 2 = 2048` per TP rank
+* Token-expert pairs per EP group = `k * M / ep = 128`
+
+### Expected calculations (step-by-step)
+
+#### 1) FLOPs
+
+**(a) Router (replicated)**
+
+* Router FLOPs per chip = `4,194,304`
+
+**(b) Expert computation**
+Total gated expert FLOPs split across EP×TP:
+
+* Total gated expert FLOPs = `12,884,901,888`
+* Per chip = `12,884,901,888 / 8 = 1,610,612,736`
+
+**(c) Total**
+
+* **flops_per_chip = 4,194,304 + 1,610,612,736 = 1,614,807,040**
+* **flops_total = 8 * 1,614,807,040 = 12,918,456,320**
+
+#### 2) Weight memory
+
+**(a) Router (replicated)**
+
+* Bytes per chip = `16,384`
+
+**(b) Expert weights (EP + TP sharded, gated)**
+Each chip holds `E_local=2` experts, each TP-sharded:
+
+* Elements per expert per TP rank = `3 * d * d_ff / tp = 3 * 1024 * 4096 / 2 = 6,291,456`
+* Elements for 2 experts = `2 * 6,291,456 = 12,582,912`
+* Bytes = `12,582,912 * 2 = 25,165,824`
+
+**(c) Total**
+
+* **weight_memory_per_chip = 16,384 + 25,165,824 = 25,182,208**
+* **weight_memory_total = 8 * 25,182,208 = 201,457,664**
+
+#### 3) Activation memory
+
+* Input x (replicated across EP): 524,288 bytes
+* Router logits: 4,096 bytes
+* Expert intermediate (EP + TP local): `(k*M/ep) * d_ff/tp = 128 * 2048 = 262,144` elems -> 524,288 bytes
+* Output y: 524,288 bytes
+
+Total:
+
+* **activation_memory_per_chip = 524,288 + 4,096 + 524,288 + 524,288 = 1,576,960**
+* **activation_memory_total = 8 * 1,576,960 = 12,615,680**
+
+#### 4) KV cache
+
+* **kv_cache_per_chip = 0**
+* **kv_cache_total = 0**
+
+#### 5) Communication
+
+Two communication patterns:
+
+**(a) EP all-to-all**
+
+* Dispatch + combine payload = `2 * M * d * bytes = 1,048,576`
+
+**(b) TP all-reduce (within each EP group)**
+
+* All-reduce payload per EP group = `(k*M/ep) * d * bytes`
+* = `128 * 1024 * 2 = 262,144`
+
+Total communication per chip:
+
+* **communication_bytes = 1,048,576 + 262,144 = 1,310,720**
+
+### Expected results
+
+**Per-chip metrics**
+
+* flops_per_chip: **1614807040**
+* weight_memory_per_chip: **25182208**
+* activation_memory_per_chip: **1576960**
+* kv_cache_per_chip: **0**
+
+**Aggregate metrics**
+
+* flops_total: **12918456320**
+* weight_memory_total: **201457664**
+* activation_memory_total: **12615680**
+* kv_cache_total: **0**
+
+**Hardware-dependent (optional)**
+
+* communication_bytes: **1310720**
 
 ---
 
@@ -1095,8 +1552,8 @@ print(f"MOE-2: FLOPs={metrics.flops_per_chip:,}, Weight={metrics.weight_memory_p
 
 ## Future Work
 
-1. **Gated MoE tests**: Add tests for 3-projection (SwiGLU-style) experts
-2. **Capacity factor tests**: Tests with C > 1.0 and token dropping
-3. **Decode phase tests**: MoE behavior during autoregressive decode
-4. **Auxiliary loss FLOPs**: Include router loss computation
-5. **Pipeline parallel MoE**: PP combined with EP/TP
+1. **Capacity factor tests**: Tests with C > 1.0 and token dropping
+2. **Decode phase tests**: MoE behavior during autoregressive decode
+3. **Auxiliary loss FLOPs**: Include router loss computation
+4. **Pipeline parallel MoE**: PP combined with EP/TP
+5. **Gated MoE with shared experts**: Combine GMOE tests with shared expert patterns (like MOE-6)
