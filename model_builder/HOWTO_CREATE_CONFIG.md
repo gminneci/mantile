@@ -1,4 +1,4 @@
-# Model Builder Plan
+# How to Create Model Configs
 
 > **Note**: This document is a structured prompt for an AI agent to follow step-by-step. It is NOT a deterministic script. The agent should use judgment, adapt to edge cases, and ask clarifying questions when needed.
 
@@ -125,6 +125,7 @@ from model_builder.utils import (
     count_parameters,
     estimate_memory,
     validate_config,
+    validate_model_config_file,
     get_supported_layers
 )
 
@@ -135,7 +136,7 @@ config = get_model_config("meta-llama/Llama-3.3-70B-Instruct")
 tensors = inspect_model_structure("meta-llama/Llama-3.3-70B-Instruct")
 
 # 3. Save for reference
-save_tensor_inspection(tensors, "output/tensors.csv")
+save_tensor_inspection(tensors, "model_builder/agent_scratchpad/tensors.csv")
 
 # 4. Analyze layer patterns
 structure = analyze_layer_structure(tensors)
@@ -507,6 +508,38 @@ Create the final configuration file following this schema:
 - Mark `supported: false` for layers without Mantile implementations
 - Link to gap reports for unsupported layers
 - Include validation sources
+- **Follow standard layer naming**: Use `attention`, `feedforward`, `norm`, `embedding`
+- **Layer order should be**: attention, feedforward, norm, embedding
+- **model_id must match filename** (without `.json` extension)
+
+**Before saving, validate the config**:
+```python
+from pathlib import Path
+from model_builder.utils import validate_model_config_file
+
+# Validate the config file
+result = validate_model_config_file(Path("backend/data/model_configs/model_id.json"))
+
+if not result['valid']:
+    print("Validation errors:")
+    for error in result['errors']:
+        print(f"  - {error}")
+    # Fix errors before proceeding
+
+if result['warnings']:
+    print("Warnings:")
+    for warning in result['warnings']:
+        print(f"  - {warning}")
+```
+
+**CLI validation** (before committing):
+```bash
+# Validate all configs
+python -m model_builder.utils validate backend/data/model_configs/
+
+# Validate specific file
+python -m model_builder.utils validate backend/data/model_configs/model_id.json
+```
 
 ---
 
@@ -541,6 +574,10 @@ Before finalizing a model config, verify:
 - [ ] Dry-run tensor inspection completed
 - [ ] Parameter count matches public claims (within 1%)
 - [ ] All layer types identified and mapped
+- [ ] **Layer names follow standard convention** (attention, feedforward, norm, embedding)
+- [ ] **No duplicate layer names**
+- [ ] **model_id matches filename** (without .json)
+- [ ] **Config passes validation**: `python -m model_builder.utils validate <config_file>`
 - [ ] Unsupported layers have gap reports
 - [ ] Validation sources documented
 - [ ] JSON schema validates

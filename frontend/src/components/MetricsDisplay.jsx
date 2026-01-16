@@ -11,6 +11,23 @@ const formatNumber = (num, decimals = 2) => {
   return decimal !== undefined ? `${formattedInteger}.${decimal}` : formattedInteger;
 };
 
+// Helper function to format time values with automatic unit conversion
+// Converts ms to seconds if > 999,999 ms and adds space between number and unit
+const formatTime = (valueMs, decimals = 2) => {
+  if (valueMs === null || valueMs === undefined) return { value: 'N/A', unit: 'ms' };
+  
+  if (valueMs > 999999) {
+    const valueS = valueMs / 1000;
+    const result = { value: formatNumber(valueS, decimals), unit: 's' };
+    console.log('formatTime DEBUG (>999999):', { valueMs, valueS, result, resultString: `${result.value} ${result.unit}` });
+    return result;
+  }
+  
+  const result = { value: formatNumber(valueMs, decimals), unit: 'ms' };
+  console.log('formatTime DEBUG (<=999999):', { valueMs, result, resultString: `${result.value} ${result.unit}` });
+  return result;
+};
+
 function StackedBarChart({ label, primaryMemory, comparisonMemory = null, delay }) {
   // Memory breakdown: weights, activations, KV cache
   const primaryTotal = (primaryMemory.weight_memory_gb || 0) + 
@@ -218,9 +235,25 @@ function StackedBarChart({ label, primaryMemory, comparisonMemory = null, delay 
   );
 }
 
-function HorizontalBarChart({ label, primaryValue, comparisonValue, unit, maxValue, delay }) {
+function HorizontalBarChart({ label, primaryValue, comparisonValue, unit, maxValue, delay, isTime = false }) {
   const primaryPercentage = (primaryValue / maxValue) * 100;
   const comparisonPercentage = (comparisonValue / maxValue) * 100;
+  
+  // Format time values if this is a time metric
+  const primaryFormatted = isTime ? formatTime(primaryValue, primaryValue >= 100 ? 0 : 1) : 
+    { value: formatNumber(primaryValue, primaryValue >= 100 ? 0 : 1), unit };
+  const comparisonFormatted = isTime ? formatTime(comparisonValue, comparisonValue >= 100 ? 0 : 1) : 
+    { value: formatNumber(comparisonValue, comparisonValue >= 100 ? 0 : 1), unit };
+
+  if (isTime) {
+    console.log('HorizontalBarChart DEBUG:', { 
+      label, 
+      primaryValue, 
+      comparisonValue,
+      primaryFormatted, 
+      comparisonFormatted 
+    });
+  }
 
   return (
     <motion.div
@@ -245,7 +278,7 @@ function HorizontalBarChart({ label, primaryValue, comparisonValue, unit, maxVal
         <div className="flex items-center justify-between mb-1">
           <span className="text-xs font-semibold" style={{ color: '#10B981' }}>Primary</span>
           <span className="text-lg font-bold" style={{ color: '#1F2937' }}>
-            {formatNumber(primaryValue, primaryValue >= 100 ? 0 : 1)} <span className="text-xs" style={{ color: '#6B7280' }}>{unit}</span>
+            {primaryFormatted.value}<span className="text-xs" style={{ color: '#6B7280' }}>{primaryFormatted.unit}</span>
           </span>
         </div>
         <div style={{ width: '100%', height: '24px', backgroundColor: '#d1d5db', borderRadius: '4px', overflow: 'hidden' }}>
@@ -267,7 +300,7 @@ function HorizontalBarChart({ label, primaryValue, comparisonValue, unit, maxVal
         <div className="flex items-center justify-between mb-1">
           <span className="text-xs font-semibold" style={{ color: '#f96c56' }}>Comparison</span>
           <span className="text-lg font-bold" style={{ color: '#1F2937' }}>
-            {formatNumber(comparisonValue, comparisonValue >= 100 ? 0 : 1)} <span className="text-xs" style={{ color: '#6B7280' }}>{unit}</span>
+            {comparisonFormatted.value}<span className="text-xs" style={{ color: '#6B7280' }}>{comparisonFormatted.unit}</span>
           </span>
         </div>
         <div style={{ width: '100%', height: '24px', backgroundColor: '#d1d5db', borderRadius: '4px', overflow: 'hidden' }}>
@@ -288,6 +321,8 @@ function HorizontalBarChart({ label, primaryValue, comparisonValue, unit, maxVal
 }
 
 function StatCard({ label, value, unit, icon: Icon, delay, highlight = false, comparisonValue = null, comparisonUnit = null }) {
+  console.log('StatCard DEBUG:', { label, value, unit, comparisonValue, comparisonUnit, unitWithSpace: ` ${unit}` });
+  
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -328,7 +363,7 @@ function StatCard({ label, value, unit, icon: Icon, delay, highlight = false, co
         </div>
       ) : (
         // Normal mode: single value
-        <div className="flex items-baseline gap-1">
+        <div className="flex items-baseline gap-2">
           <span className={`${highlight ? 'text-4xl' : 'text-3xl'} font-bold`} style={{ color: '#1F2937' }}>
             {value}
           </span>
@@ -444,6 +479,7 @@ export default function MetricsDisplay({ metrics, comparisonMetrics = null }) {
                 unit="ms"
                 maxValue={Math.max(metrics.ttft_ms || 0, comparisonMetrics.ttft_ms || 0) * 1.1}
                 delay={0.1}
+                isTime={true}
               />
               <HorizontalBarChart
                 label="TPOT (Time per Output Token)"
@@ -452,6 +488,7 @@ export default function MetricsDisplay({ metrics, comparisonMetrics = null }) {
                 unit="ms"
                 maxValue={Math.max(metrics.tpot_ms || 0, comparisonMetrics.tpot_ms || 0) * 1.1}
                 delay={0.2}
+                isTime={true}
               />
               <HorizontalBarChart
                 label="TPS/User (Tokens per Second per User)"
@@ -528,16 +565,16 @@ export default function MetricsDisplay({ metrics, comparisonMetrics = null }) {
             <>
               <StatCard
                 label="TTFT (Time to First Token)"
-                value={formatNumber(metrics.ttft_ms) || 'N/A'}
-                unit="ms"
+                value={formatTime(metrics.ttft_ms).value}
+                unit={formatTime(metrics.ttft_ms).unit}
                 icon={Clock}
                 delay={0.1}
                 highlight={true}
               />
               <StatCard
                 label="TPOT (Time per Output Token)"
-                value={formatNumber(metrics.tpot_ms) || 'N/A'}
-                unit="ms"
+                value={formatTime(metrics.tpot_ms).value}
+                unit={formatTime(metrics.tpot_ms).unit}
                 icon={Clock}
                 delay={0.2}
                 highlight={true}

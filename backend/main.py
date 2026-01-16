@@ -43,6 +43,12 @@ class PhaseMetricsRequest(BaseModel):
     layers: Dict[str, Dict[str, Any]] = {}
 
 
+class SystemMetricsRequest(BaseModel):
+    """Wrapper for two-phase system metrics request."""
+    prefill_req: PhaseMetricsRequest
+    decode_req: PhaseMetricsRequest
+
+
 def _construct_layer(layer_class: Type, specs: Dict[str, Any], dtype_enum: DataType, parallelism: Dict[str, Any]):
     """Safely construct a layer instance by filtering JSON specs to the class __init__ signature.
 
@@ -195,15 +201,17 @@ def compute_phase_metrics(phase_req: PhaseMetricsRequest, phase: Phase) -> dict:
 
 
 @app.post("/config/system-metrics")
-def compute_system_metrics(prefill_req: PhaseMetricsRequest, decode_req: PhaseMetricsRequest):
+def compute_system_metrics(request: SystemMetricsRequest):
     """
     Stateless endpoint: Compute full system-level metrics.
     Takes separate requests for prefill and decode phases.
     
     Args:
-        prefill_req: Configuration for prefill phase (prompt processing, seq_len = input prompt length)
-        decode_req: Configuration for decode phase (token generation, seq_len = number of output tokens)
+        request: SystemMetricsRequest containing prefill_req and decode_req
     """
+    prefill_req = request.prefill_req
+    decode_req = request.decode_req
+    
     # Load pre-validated model config and hardware (use prefill_req as source)
     model_cfg = load_model_config(prefill_req.model_id)
     hardware_cfg = load_hardware_config(prefill_req.hardware_id)

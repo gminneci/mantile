@@ -378,7 +378,7 @@ export default function App() {
       setMetrics(response.data);
     } catch (err) {
       if (err.response?.data) {
-        setError(err.response.data.detail || 'Failed to compute metrics');
+        setError(err.response.data.detail || JSON.stringify(err.response.data));
       } else {
         setError(`Failed to compute metrics: ${err.message}`);
       }

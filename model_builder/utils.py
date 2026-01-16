@@ -43,6 +43,7 @@ __all__ = [
     'estimate_memory',
     'get_supported_layers',
     'validate_config',
+    'validate_model_config_file',
 ]
 
 
@@ -825,68 +826,280 @@ def validate_config(
     }
 
 
+def validate_model_config_file(config_path: Path) -> Dict[str, Any]:
+    """
+    Validate a Mantile model config JSON file for consistency and correctness.
+    
+    Checks:
+    - Layer names follow standard conventions (attention, feedforward, norm, embedding)
+    - Layer order is consistent (attention, feedforward, norm, embedding)
+    - No duplicate layer names
+    - All required fields are present
+    - model_id matches filename
+    - Layer classes are valid
+    
+    Args:
+        config_path: Path to model config JSON file
+        
+    Returns:
+        Dictionary with validation results:
+        {
+            'valid': bool,
+            'errors': List[str],
+            'warnings': List[str],
+            'config': dict  # The loaded config
+        }
+        
+    Example:
+        >>> result = validate_model_config_file(Path("backend/data/model_configs/llama.json"))
+        >>> if not result['valid']:
+        ...     for error in result['errors']:
+        ...         print(f"ERROR: {error}")
+    """
+    errors = []
+    warnings = []
+    
+    # Standard layer naming conventions
+    STANDARD_LAYER_NAMES = {'attention', 'feedforward', 'norm', 'embedding'}
+    STANDARD_LAYER_ORDER = ['attention', 'feedforward', 'norm', 'embedding']
+    
+    # Valid layer classes
+    VALID_LAYER_CLASSES = {
+        'AttentionLayer',
+        'GroupedQueryAttentionLayer',
+        'MLPLayer',
+        'GatedMLPLayer',
+        'NormLayer',
+        'EmbeddingLayer'
+    }
+    
+    try:
+        # Load config
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+        
+        # Check model_id matches filename
+        filename_without_ext = config_path.stem
+        if config.get('model_id') != filename_without_ext:
+            errors.append(
+                f"model_id '{config.get('model_id')}' does not match filename '{filename_without_ext}'"
+            )
+        
+        # Check required top-level fields
+        required_fields = ['model_id', 'hf_model_id', 'name', 'hidden_size', 'num_layers', 'vocab_size', 'layer_types']
+        for field in required_fields:
+            if field not in config:
+                errors.append(f"Missing required field: {field}")
+        
+        # Check layer_types
+        if 'layer_types' not in config:
+            return {
+                'valid': False,
+                'errors': errors + ['Missing layer_types field'],
+                'warnings': warnings,
+                'config': config
+            }
+        
+        layer_types = config['layer_types']
+        if not isinstance(layer_types, list):
+            errors.append("layer_types must be a list")
+            return {'valid': False, 'errors': errors, 'warnings': warnings, 'config': config}
+        
+        # Extract layer names
+        layer_names = [lt.get('name') for lt in layer_types]
+        
+        # Check for duplicate layer names
+        if len(layer_names) != len(set(layer_names)):
+            duplicates = [n for n in layer_names if layer_names.count(n) > 1]
+            errors.append(f"Duplicate layer names found: {set(duplicates)}")
+        
+        # Check layer naming conventions
+        non_standard_names = set(layer_names) - STANDARD_LAYER_NAMES
+        if non_standard_names:
+            errors.append(
+                f"Non-standard layer names found: {non_standard_names}. "
+                f"Standard names are: {STANDARD_LAYER_NAMES}"
+            )
+        
+        # Check layer order (warning only)
+        present_standard_layers = [name for name in STANDARD_LAYER_ORDER if name in layer_names]
+        actual_order = [name for name in layer_names if name in STANDARD_LAYER_NAMES]
+        if actual_order != present_standard_layers:
+            warnings.append(
+                f"Layer order differs from standard: expected {present_standard_layers}, got {actual_order}"
+            )
+        
+        # Check each layer
+        for i, layer_type in enumerate(layer_types):
+            layer_prefix = f"layer_types[{i}]"
+            
+            # Check required fields
+            required_layer_fields = ['name', 'class', 'count', 'specs']
+            for field in required_layer_fields:
+                if field not in layer_type:
+                    errors.append(f"{layer_prefix}: Missing required field '{field}'")
+            
+            # Check layer class is valid
+            layer_class = layer_type.get('class')
+            if layer_class and layer_class not in VALID_LAYER_CLASSES:
+                errors.append(
+                    f"{layer_prefix} ('{layer_type.get('name')}'): Unknown layer class '{layer_class}'. "
+                    f"Valid classes: {VALID_LAYER_CLASSES}"
+                )
+            
+            # Check specs is a dict
+            if 'specs' in layer_type and not isinstance(layer_type['specs'], dict):
+                errors.append(f"{layer_prefix}: 'specs' must be a dictionary")
+        
+        return {
+            'valid': len(errors) == 0,
+            'errors': errors,
+            'warnings': warnings,
+            'config': config
+        }
+        
+    except json.JSONDecodeError as e:
+        return {
+            'valid': False,
+            'errors': [f"Invalid JSON: {e}"],
+            'warnings': [],
+            'config': None
+        }
+    except Exception as e:
+        return {
+            'valid': False,
+            'errors': [f"Error reading config: {e}"],
+            'warnings': [],
+            'config': None
+        }
+
+
 if __name__ == "__main__":
     # Example usage
     import argparse
+    import sys
     
-    parser = argparse.ArgumentParser(description="Inspect HuggingFace model structure")
-    parser.add_argument("model_id", help="HuggingFace model ID or local path")
-    parser.add_argument("--config-out", help="Save config to JSON file")
-    parser.add_argument("--tensors-out", help="Save tensor inspection to CSV file")
-    parser.add_argument("--download", action="store_true", help="Download full weights")
-    parser.add_argument("--analyze", action="store_true", help="Analyze layer structure")
-    parser.add_argument("--validate", type=int, help="Expected parameter count for validation")
+    parser = argparse.ArgumentParser(description="Inspect HuggingFace models and validate Mantile configs")
+    subparsers = parser.add_subparsers(dest='command', help='Command to run', required=True)
+    
+    # Inspect command
+    inspect_parser = subparsers.add_parser('inspect', help='Inspect HuggingFace model structure')
+    inspect_parser.add_argument("model_id", help="HuggingFace model ID or local path")
+    inspect_parser.add_argument("--config-out", help="Save config to JSON file")
+    inspect_parser.add_argument("--tensors-out", help="Save tensor inspection to CSV file")
+    inspect_parser.add_argument("--download", action="store_true", help="Download full weights")
+    inspect_parser.add_argument("--analyze", action="store_true", help="Analyze layer structure")
+    inspect_parser.add_argument("--validate", type=int, help="Expected parameter count for validation")
+    
+    # Validate command
+    validate_parser = subparsers.add_parser('validate', help='Validate Mantile model config files')
+    validate_parser.add_argument("config_paths", nargs='+', help="Path(s) to model config JSON files or directory")
+    validate_parser.add_argument("--strict", action="store_true", help="Treat warnings as errors")
     
     args = parser.parse_args()
     
-    # Get config
-    print(f"Fetching config for {args.model_id}...")
-    config = get_model_config(args.model_id, output_path=args.config_out)
-    print(f"  Hidden size: {config.get('hidden_size')}")
-    print(f"  Num layers: {config.get('num_hidden_layers')}")
+    if args.command == 'inspect':
+        # Get config
+        print(f"Fetching config for {args.model_id}...")
+        config = get_model_config(args.model_id, output_path=args.config_out)
+        print(f"  Hidden size: {config.get('hidden_size')}")
+        print(f"  Num layers: {config.get('num_hidden_layers')}")
+        
+        # Inspect structure
+        print(f"\nInspecting model structure...")
+        tensors = inspect_model_structure(args.model_id, use_empty_weights=not args.download)
+        print(f"  Found {len(tensors)} tensors")
+        
+        if args.tensors_out:
+            save_tensor_inspection(tensors, args.tensors_out)
+            print(f"  Saved to {args.tensors_out}")
+        
+        # Count parameters
+        counts = count_parameters(tensors)
+        print(f"\nParameter count: {counts['total_formatted']} ({counts['total']:,})")
+        for component, count in counts['by_component'].items():
+            print(f"  {component}: {count:,}")
+        
+        # Memory estimate
+        mem = estimate_memory(tensors)
+        print(f"\nMemory (fp16): {mem['gb']:.1f} GB")
+        
+        # Analyze structure
+        if args.analyze:
+            print(f"\nAnalyzing layer structure...")
+            structure = analyze_layer_structure(tensors)
+            print(f"  Layers: {structure['num_layers']}")
+            print(f"  Has attention: {structure['has_attention']}")
+            print(f"  Has MLP: {structure['has_mlp']}")
+            print(f"  Attention projections: {structure['attention_projections']}")
+            print(f"  MLP projections: {structure['mlp_projections']}")
+        
+        # Validation
+        if args.validate:
+            print(f"\nValidating against expected {args.validate:,} parameters...")
+            result = validate_config(tensors, expected_params=args.validate)
+            print(f"  Valid: {result['valid']}")
+            for disc in result['discrepancies']:
+                print(f"  ⚠️  {disc}")
+        
+        # Show supported layers
+        print(f"\nSupported Mantile layers:")
+        try:
+            layers = get_supported_layers()
+            for name, info in layers.items():
+                doc = info.get('docstring', 'No description')
+                print(f"  {name}: {doc[:60]}..." if len(doc) > 60 else f"  {name}: {doc}")
+        except FileNotFoundError as e:
+            print(f"  Could not find layers directory: {e}")
     
-    # Inspect structure
-    print(f"\nInspecting model structure...")
-    tensors = inspect_model_structure(args.model_id, use_empty_weights=not args.download)
-    print(f"  Found {len(tensors)} tensors")
-    
-    if args.tensors_out:
-        save_tensor_inspection(tensors, args.tensors_out)
-        print(f"  Saved to {args.tensors_out}")
-    
-    # Count parameters
-    counts = count_parameters(tensors)
-    print(f"\nParameter count: {counts['total_formatted']} ({counts['total']:,})")
-    for component, count in counts['by_component'].items():
-        print(f"  {component}: {count:,}")
-    
-    # Memory estimate
-    mem = estimate_memory(tensors)
-    print(f"\nMemory (fp16): {mem['gb']:.1f} GB")
-    
-    # Analyze structure
-    if args.analyze:
-        print(f"\nAnalyzing layer structure...")
-        structure = analyze_layer_structure(tensors)
-        print(f"  Layers: {structure['num_layers']}")
-        print(f"  Has attention: {structure['has_attention']}")
-        print(f"  Has MLP: {structure['has_mlp']}")
-        print(f"  Attention projections: {structure['attention_projections']}")
-        print(f"  MLP projections: {structure['mlp_projections']}")
-    
-    # Validation
-    if args.validate:
-        print(f"\nValidating against expected {args.validate:,} parameters...")
-        result = validate_config(tensors, expected_params=args.validate)
-        print(f"  Valid: {result['valid']}")
-        for disc in result['discrepancies']:
-            print(f"  ⚠️  {disc}")
-    
-    # Show supported layers
-    print(f"\nSupported Mantile layers:")
-    try:
-        layers = get_supported_layers()
-        for name, info in layers.items():
-            print(f"  {name}: {info['docstring'][:60]}..." if len(info.get('docstring', '')) > 60 else f"  {name}: {info.get('docstring', 'No description')}")
-    except FileNotFoundError as e:
-        print(f"  Could not find layers directory: {e}")
+    elif args.command == 'validate':
+        # Collect all config files
+        config_files = []
+        for path_str in args.config_paths:
+            path = Path(path_str)
+            if path.is_dir():
+                config_files.extend(path.glob('*.json'))
+            elif path.is_file():
+                config_files.append(path)
+            else:
+                print(f"Warning: {path_str} is not a valid file or directory")
+        
+        if not config_files:
+            print("Error: No config files found")
+            sys.exit(1)
+        
+        print(f"Validating {len(config_files)} config file(s)...\n")
+        
+        all_valid = True
+        for config_file in sorted(config_files):
+            result = validate_model_config_file(config_file)
+            
+            # Print results
+            status = "✓" if result['valid'] else "✗"
+            print(f"{status} {config_file.name}")
+            
+            if result['errors']:
+                all_valid = False
+                for error in result['errors']:
+                    print(f"    ERROR: {error}")
+            
+            if result['warnings']:
+                if args.strict:
+                    all_valid = False
+                for warning in result['warnings']:
+                    prefix = "ERROR" if args.strict else "WARNING"
+                    print(f"    {prefix}: {warning}")
+            
+            if result['valid'] and not result['warnings']:
+                print(f"    All checks passed")
+            
+            print()
+        
+        # Summary
+        if all_valid:
+            print(f"✓ All {len(config_files)} config(s) validated successfully")
+            sys.exit(0)
+        else:
+            print(f"✗ Validation failed for one or more configs")
+            sys.exit(1)
+

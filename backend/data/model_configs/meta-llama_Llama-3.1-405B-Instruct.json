@@ -9,16 +9,6 @@
     "total_params_formatted": "405.9B",
     "layer_types": [
         {
-            "name": "embedding",
-            "class": "EmbeddingLayer",
-            "count": 1,
-            "supported": true,
-            "specs": {
-                "vocab_size": 128256,
-                "hidden_size": 16384
-            }
-        },
-        {
             "name": "attention",
             "class": "GroupedQueryAttentionLayer",
             "count": 126,
@@ -31,7 +21,7 @@
             }
         },
         {
-            "name": "mlp",
+            "name": "feedforward",
             "class": "GatedMLPLayer",
             "count": 126,
             "supported": true,
@@ -51,7 +41,7 @@
             }
         },
         {
-            "name": "output",
+            "name": "embedding",
             "class": "EmbeddingLayer",
             "count": 1,
             "supported": true,
