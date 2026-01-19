@@ -42,4 +42,4 @@ _To be defined_
 
 ## Development Plan
 
-See HOWTO_CREATE_CONFIG.md for detailed implementation roadmap.
+See AGENT_CREATE_CONFIG.md for detailed implementation roadmap.

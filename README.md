@@ -1,6 +1,6 @@
 # Mantile (μάντις)
 
-**Mantile** blends _Fractile_ (the company) with the Greek **μάντις** (_mantis_), meaning "prophet," "seer," or "one who divines." In ancient Greece, a _mantis_ was a religious specialist inspired by the gods, capable of foretelling the future. Like its namesake, Mantile predicts LLM inference performance—estimating latency, throughput, and memory usage on modern AI accelerators.
+**Mantile** references the Greek **μάντις** (_mantis_), meaning "prophet," "seer," or "one who divines." In ancient Greece, a _mantis_ was a religious specialist inspired by the gods, capable of foretelling the future. Like its namesake, Mantile predicts LLM inference performance—estimating latency, throughput, and memory usage on modern AI accelerators.
 
 ---
 
@@ -121,4 +121,4 @@ The frontend is a React application built with Vite, providing an interactive UI
 
 ## License
 
-Copyright © 2026 Fractile AI. All rights reserved.
+Copyright © 2026. All rights reserved.
