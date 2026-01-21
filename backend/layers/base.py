@@ -271,7 +271,7 @@ class Layer(ABC):
             seq_len: Sequence length
             phase: PREFILL or DECODE (or string)
             hardware: Optional hardware config dict with:
-                - compute_tflops: Peak compute throughput per chip (TFLOPS)
+                - compute_per_package_PFlops: Dict of peak compute per dtype (PFLOPs)
                 - memory_bandwidth_gb_s: Memory bandwidth per chip (GB/s)
                 - interconnect_bandwidth_gb_s: Inter-chip bandwidth (GB/s)
                 - interconnect_latency_us: Inter-chip latency (microseconds)
@@ -316,9 +316,10 @@ class Layer(ABC):
         can_overlap = None
         
         if hardware:
-            # Compute time: FLOPs / (peak_tflops * 10^12)
+            # Compute time: FLOPs / peak_flops
             # Per-package FLOPs since work is parallelized
-            peak_flops = hardware.get("compute_tflops", 0) * 1e12
+            peak_pflops = hardware.get("compute_per_package_PFlops", {}).get(self.dtype.value, 0)
+            peak_flops = peak_pflops * 1e15  # Convert PFLOPs to FLOPs
             if peak_flops > 0:
                 compute_time = (flops_per_package / peak_flops) * 1000  # Convert to ms
             

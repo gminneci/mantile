@@ -493,13 +493,12 @@ Total:
 
 #### 5) Communication
 
-TP requires all-reduce on expert outputs. For MoE, need to all-reduce after processing each token's selected experts:
+TP requires all-reduce on expert outputs. Each token activates k=2 experts, and each expert's TP-sharded FFN requires all-reduce:
 
-* All-reduce payload = `M * d * bytes_per_elem = 256 * 1024 * 2 = 524,288`
+* Token-expert pairs = `k * M = 2 * 256 = 512`
+* All-reduce payload = `k * M * d * bytes_per_elem = 512 * 1024 * 2 = 1,048,576`
 
-But with k=2 experts per token and sparse routing, communication may be more complex. Simplified assumption: one all-reduce on final accumulated output.
-
-* **communication_bytes = 524,288**
+* **communication_bytes = 1,048,576**
 
 ### Expected results
 
@@ -519,7 +518,7 @@ But with k=2 experts per token and sparse routing, communication may be more com
 
 **Hardware-dependent (optional)**
 
-* communication_bytes: **524288**
+* communication_bytes: **1048576**
 
 ---
 
@@ -1377,10 +1376,11 @@ Total:
 
 #### 5) Communication
 
-TP all-reduce on expert outputs:
+TP all-reduce on expert outputs. Each token activates k=2 experts, and each expert's TP-sharded FFN requires all-reduce:
 
-* Payload = `M * d * bytes = 256 * 1024 * 2 = 524,288`
-* **communication_bytes = 524,288**
+* Token-expert pairs = `k * M = 2 * 256 = 512`
+* Payload = `k * M * d * bytes = 512 * 1024 * 2 = 1,048,576`
+* **communication_bytes = 1,048,576**
 
 ### Expected results
 
@@ -1400,7 +1400,7 @@ TP all-reduce on expert outputs:
 
 **Hardware-dependent (optional)**
 
-* communication_bytes: **524288**
+* communication_bytes: **1048576**
 
 ---
 

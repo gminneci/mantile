@@ -43,20 +43,20 @@ Load a specific hardware configuration.
 **Response:**
 ```json
 {
-  "name": "NVIDIA NVL-72 Rack",
-  "num_chips": 72,
-  "memory": [
+  "name": "NVIDIA GB200 NVL72",
+  "packages_per_domain": 72,
+  "memory_per_package": [
     {
-      "type": "HBM3e",
-      "capacity_gb": 141,
-      "bandwidth_gbps": 4800
+      "type": "HBM",
+      "capacity_gb": 192,
+      "bandwidth_gbps": 8192
     }
   ],
-  "compute": {
-    "bf16": 2000.0,
-    "fp16": 2000.0,
-    "fp8": 4000.0,
-    "int8": 4000.0
+  "compute_per_package_PFlops": {
+    "bf16": 2.5,
+    "fp16": 2.5,
+    "nvfp8": 5.0,
+    "int8": 5.0
   },
   "interconnect": { ... }
 }

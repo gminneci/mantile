@@ -300,14 +300,15 @@ class MoELayer(Layer):
     ) -> Optional[int]:
         """
         Compute communication bytes per chip for MoE.
-        
+
         EP communication: All-to-all dispatch (tokens to experts) and combine (outputs back)
         TP communication: All-reduce on expert outputs
         CP communication: May require gather/scatter for routing
-        
+
         Simplified model:
         - EP all-to-all: 2 * M * d * bytes (dispatch + combine)
-        - TP all-reduce: (k * M / ep) * d * bytes (local token-expert outputs)
+        - TP all-reduce (routed): (k * M / ep) * d * bytes (local token-expert outputs)
+        - TP all-reduce (shared): (M / ep) * d * bytes (if shared experts exist)
         """
         ep = self.parallelism.get("expert_parallel", 1)
         tp = self.parallelism.get("tensor_parallel", 1)
@@ -334,15 +335,17 @@ class MoELayer(Layer):
         
         # TP all-reduce on expert outputs
         if tp > 1:
+            # Each token activates k experts, each expert output needs all-reduce
+            # With EP, experts are distributed so each chip handles (k * M / ep) pairs
             # All-reduce payload = local token-expert pairs × d
-            token_expert_pairs_local = (k * M) // ep if ep > 1 else k * M
-            # For TP within MoE, we reduce the accumulated output
-            # Simplified: just the output tensor
-            tp_comm = M * d * bytes_per_elem
-            # But test spec uses: (k*M/ep) * d * bytes for hybrid
-            # Let's match the test spec pattern
-            if ep > 1:
-                tp_comm = token_expert_pairs_local * d * bytes_per_elem
+            routed_pairs_local = (k * M) // ep
+            tp_comm = routed_pairs_local * d * bytes_per_elem
+
+            # Shared experts also need TP all-reduce (M/ep tokens per chip)
+            if self.num_shared_experts > 0:
+                shared_pairs_local = M // ep
+                tp_comm += shared_pairs_local * d * bytes_per_elem
+
             comm_bytes += int(tp_comm)
         
         return int(comm_bytes) if comm_bytes > 0 else None

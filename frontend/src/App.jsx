@@ -89,12 +89,12 @@ export default function App() {
   // Helper: derive dtype list from hardware capabilities
   const deriveDtypes = (hw) => {
     const dtypes = [];
-    if (hw?.compute_per_package_GFlops?.bf16) dtypes.push('bf16');
-    if (hw?.compute_per_package_GFlops?.fp16) dtypes.push('fp16');
-    if (hw?.compute_per_package_GFlops?.fp8) dtypes.push('fp8');
-    if (hw?.compute_per_package_GFlops?.nvfp8) dtypes.push('nvfp8');
-    if (hw?.compute_per_package_GFlops?.nvfp4) dtypes.push('nvfp4');
-    if (hw?.compute_per_package_GFlops?.int8) dtypes.push('int8');
+    if (hw?.compute_per_package_PFlops?.bf16) dtypes.push('bf16');
+    if (hw?.compute_per_package_PFlops?.fp16) dtypes.push('fp16');
+    if (hw?.compute_per_package_PFlops?.fp8) dtypes.push('fp8');
+    if (hw?.compute_per_package_PFlops?.nvfp8) dtypes.push('nvfp8');
+    if (hw?.compute_per_package_PFlops?.nvfp4) dtypes.push('nvfp4');
+    if (hw?.compute_per_package_PFlops?.int8) dtypes.push('int8');
     return dtypes.length ? dtypes : ['bf16', 'fp16', 'int8'];
   };
 

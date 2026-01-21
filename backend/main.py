@@ -168,27 +168,34 @@ def compute_phase_metrics(phase_req: PhaseMetricsRequest, phase: Phase) -> dict:
 
         num_instances = layer_type.get("count", 1)
 
-        # Hardware characteristics per package
-        hbm_memory = next((m for m in hardware_cfg['memory'] if 'HBM' in m['type']), hardware_cfg['memory'][0])
-        hbm_bw_per_package = hbm_memory['bandwidth_gbps']
-        assert dtype_enum.value in hardware_cfg['compute_per_package_GFlops'], f"Hardware missing compute spec for dtype {dtype_enum.value}"
-        peak_gflops_per_package = hardware_cfg['compute_per_package_GFlops'][dtype_enum.value]
+        # Prepare hardware config for base.py's compute_metrics
+        # base.py expects compute_per_package_PFlops and memory_bandwidth_gb_s
+        hbm_memory = next((m for m in hardware_cfg['memory_per_package'] if 'HBM' in m['type']), hardware_cfg['memory_per_package'][0])
+        hardware_for_layer = {
+            'compute_per_package_PFlops': hardware_cfg['compute_per_package_PFlops'],
+            'memory_bandwidth_gb_s': hbm_memory['bandwidth_gbps'],
+            'interconnect_bandwidth_gb_s': hardware_cfg.get('interconnect_bandwidth_gbps', 0),
+            'interconnect_latency_us': hardware_cfg.get('interconnect_latency_us', 0)
+        }
 
-        # Compute metrics for this phase
+        # Compute metrics for this phase (base.py handles hardware-aware timing)
         m = layer.compute_metrics(
             batch_size=phase_req.batch_size,
             seq_len=phase_req.seq_len,
             phase=phase,
+            hardware=hardware_for_layer
         )
+        
         max_packages = max(max_packages, m.num_packages)
         total_weight_memory_gb += (m.weight_memory_per_package * num_instances) / 1e9
         total_activation_memory_gb += (m.activation_memory_per_package * num_instances) / 1e9
         total_kv_cache_gb += (m.kv_cache_per_package * num_instances) / 1e9
-
-        # Total compute available = peak per package * number of packages in use
-        total_peak_gflops = peak_gflops_per_package * m.num_packages
-        compute_time_ms += ((m.flops_per_package * num_instances) / 1e9) / total_peak_gflops * 1000
-        memory_time_ms += ((m.weight_memory_per_package * num_instances) / 1e9) / hbm_bw_per_package * 1000
+        
+        # Aggregate timing from layer metrics (base.py computed these)
+        if m.compute_time_ms is not None:
+            compute_time_ms += m.compute_time_ms * num_instances
+        if m.weight_load_time_ms is not None:
+            memory_time_ms += m.weight_load_time_ms * num_instances
 
     return {
         "total_weight_memory_gb": total_weight_memory_gb,
@@ -256,7 +263,7 @@ def compute_system_metrics(request: SystemMetricsRequest):
         total_weight_memory_gb + total_activation_memory_gb + total_kv_cache_gb
     ) / max_packages if max_packages > 0 else 0.0
     
-    hbm_memory = next((m for m in hardware_cfg['memory'] if 'HBM' in m['type']), hardware_cfg['memory'][0])
+    hbm_memory = next((m for m in hardware_cfg['memory_per_package'] if 'HBM' in m['type']), hardware_cfg['memory_per_package'][0])
     hw_capacity_gb = hbm_memory['capacity_gb']
     fits_on_hardware = memory_per_package_gb <= hw_capacity_gb
     

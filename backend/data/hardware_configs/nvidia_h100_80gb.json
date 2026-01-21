@@ -2,13 +2,13 @@
   "name": "NVIDIA H100 SXM5 (80GB)",
   "description": "Single H100 SXM5 GPU with 80GB HBM3. Standard datacenter configuration.",
   "manufacturer": "NVIDIA",
-  "compute_per_package_GFlops": {
-    "bf16": 1980.0,
-    "nvfp8": 3960.0,
-    "int8": 3960.0
+  "compute_per_package_PFlops": {
+    "bf16": 1.98,
+    "nvfp8": 3.96,
+    "int8": 3.96
   },
-  "memory": [
-    {"type": "HBM3", "capacity_gb": 80.0, "bandwidth_gbps": 3430.0}
+  "memory_per_package": [
+    {"type": "HBM", "capacity_gb": 80.0, "bandwidth_gbps": 3430.0}
   ],
   "interconnect_bandwidth_gbps": 900.0,
   "interconnect_latency_us": 0.30,

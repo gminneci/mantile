@@ -11,19 +11,19 @@ Each JSON file defines a hardware configuration with the following fields:
   "name": "Hardware Name",
   "description": "Brief description of the hardware",
   "manufacturer": "Manufacturer Name",
-  "compute": {
-    "fp16": 0.0,  // FP16 compute in TFLOPs
-    "bf16": 0.0,  // BF16 compute in TFLOPs
-    "fp8": 0.0,   // FP8 compute in TFLOPs
-    "int8": 0.0   // INT8 compute in TOPs
+  "compute_per_package_PFlops": {
+    "fp16": 0.0,  // FP16 compute in PFLOPs per package
+    "bf16": 0.0,  // BF16 compute in PFLOPs per package
+    "fp8": 0.0,   // FP8 compute in PFLOPs per package
+    "int8": 0.0   // INT8 compute in POPs per package
   },
-  "memory": [
+  "memory_per_package": [
     {"type": "HBM", "capacity_gb": 0.0, "bandwidth_gbps": 0.0}
   ],
   "interconnect_bandwidth_gbps": 0.0, // NVLink/interconnect BW in GB/s
   "interconnect_latency_us": 0.0,     // Interconnect latency in microseconds
-  "chips_per_node": 1,    // Number of chips per node
-  "nodes_per_cluster": 1  // Number of nodes in cluster
+  "packages_per_domain": 1,    // Number of packages per domain
+  "domains_per_cluster": 1  // Number of domains in cluster
 }
 ```
 
@@ -39,8 +39,8 @@ Hardware configs are loaded via the FastAPI endpoint:
 hardware = load_hardware_config("nvidia_gb200_single")
 
 # Access nested structure:
-bf16_tflops = hardware['compute']['bf16']
-hbm_memory = next((m for m in hardware['memory'] if 'HBM' in m['type']), hardware['memory'][0])
+bf16_pflops = hardware['compute_per_package_PFlops']['bf16']
+hbm_memory = next((m for m in hardware['memory_per_package'] if 'HBM' in m['type']), hardware['memory_per_package'][0])
 capacity = hbm_memory['capacity_gb']
 bandwidth = hbm_memory['bandwidth_gbps']
 ```
