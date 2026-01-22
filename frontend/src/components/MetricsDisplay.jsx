@@ -18,14 +18,10 @@ const formatTime = (valueMs, decimals = 2) => {
   
   if (valueMs > 999999) {
     const valueS = valueMs / 1000;
-    const result = { value: formatNumber(valueS, decimals), unit: 's' };
-    console.log('formatTime DEBUG (>999999):', { valueMs, valueS, result, resultString: `${result.value} ${result.unit}` });
-    return result;
+    return { value: formatNumber(valueS, decimals), unit: 's' };
   }
   
-  const result = { value: formatNumber(valueMs, decimals), unit: 'ms' };
-  console.log('formatTime DEBUG (<=999999):', { valueMs, result, resultString: `${result.value} ${result.unit}` });
-  return result;
+  return { value: formatNumber(valueMs, decimals), unit: 'ms' };
 };
 
 function StackedBarChart({ label, primaryMemory, comparisonMemory = null, delay }) {
@@ -245,16 +241,6 @@ function HorizontalBarChart({ label, primaryValue, comparisonValue, unit, maxVal
   const comparisonFormatted = isTime ? formatTime(comparisonValue, comparisonValue >= 100 ? 0 : 1) : 
     { value: formatNumber(comparisonValue, comparisonValue >= 100 ? 0 : 1), unit };
 
-  if (isTime) {
-    console.log('HorizontalBarChart DEBUG:', { 
-      label, 
-      primaryValue, 
-      comparisonValue,
-      primaryFormatted, 
-      comparisonFormatted 
-    });
-  }
-
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -321,8 +307,6 @@ function HorizontalBarChart({ label, primaryValue, comparisonValue, unit, maxVal
 }
 
 function StatCard({ label, value, unit, icon: Icon, delay, highlight = false, comparisonValue = null, comparisonUnit = null }) {
-  console.log('StatCard DEBUG:', { label, value, unit, comparisonValue, comparisonUnit, unitWithSpace: ` ${unit}` });
-  
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -378,8 +362,19 @@ function StatCard({ label, value, unit, icon: Icon, delay, highlight = false, co
  * MetricsDisplay - Shows system metrics with TTFT, TPOT, TPS/User, and Throughput
  * Displays horizontal bar charts when comparison is active
  */
-export default function MetricsDisplay({ metrics, comparisonMetrics = null }) {
-  const [activeTab, setActiveTab] = useState('system');
+export default function MetricsDisplay({ 
+  metrics, 
+  comparisonMetrics = null,
+  viewMode = 'system',
+  onViewModeChange = null,
+  layerMetricsContent = null
+}) {
+  const activeTab = viewMode;
+  const setActiveTab = (mode) => {
+    if (onViewModeChange) {
+      onViewModeChange(mode);
+    }
+  };
   
   if (!metrics) return null;
 
@@ -427,14 +422,14 @@ export default function MetricsDisplay({ metrics, comparisonMetrics = null }) {
           <span>System Metrics</span>
         </button>
         <button
-          onClick={() => setActiveTab('layers')}
+          onClick={() => setActiveTab('layer')}
           style={{
             display: 'flex',
             alignItems: 'center',
             gap: '0.5rem',
             padding: '0.75rem 1.5rem',
-            backgroundColor: activeTab === 'layers' ? '#29AF83' : '#2c2c2c',
-            color: activeTab === 'layers' ? '#ffffff' : '#9CA3AF',
+            backgroundColor: activeTab === 'layer' ? '#29AF83' : '#2c2c2c',
+            color: activeTab === 'layer' ? '#ffffff' : '#9CA3AF',
             border: 'none',
             borderRadius: '6px',
             fontSize: '0.875rem',
@@ -443,12 +438,12 @@ export default function MetricsDisplay({ metrics, comparisonMetrics = null }) {
             transition: 'all 0.2s',
           }}
           onMouseEnter={(e) => {
-            if (activeTab !== 'layers') {
+            if (activeTab !== 'layer') {
               e.currentTarget.style.backgroundColor = '#3a3a3a';
             }
           }}
           onMouseLeave={(e) => {
-            if (activeTab !== 'layers') {
+            if (activeTab !== 'layer') {
               e.currentTarget.style.backgroundColor = '#2c2c2c';
             }
           }}
@@ -662,7 +657,7 @@ export default function MetricsDisplay({ metrics, comparisonMetrics = null }) {
       )}
 
       {/* Layer Metrics Tab */}
-      {activeTab === 'layers' && (
+      {activeTab === 'layer' && (layerMetricsContent || (
         <div style={{ width: '100%', paddingLeft: '1.4rem', paddingRight: '1.4rem' }}>
           <div style={{ 
             backgroundColor: '#e7e3da',
@@ -674,10 +669,10 @@ export default function MetricsDisplay({ metrics, comparisonMetrics = null }) {
           }}>
             <Layers size={48} style={{ margin: '0 auto 1rem', opacity: 0.5 }} />
             <p style={{ fontSize: '1rem', fontWeight: '500' }}>Layer Metrics</p>
-            <p style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>Coming soon...</p>
+            <p style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>Click on up to 2 layer panels in the sidebars to compare</p>
           </div>
         </div>
-      )}
+      ))}
 
       {/* Debug: Show raw data */}
       <details className="mt-4" style={{ paddingLeft: '1.4rem', paddingRight: '1.4rem' }}>

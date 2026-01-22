@@ -68,7 +68,7 @@ class LayerMetrics:
     
     Hardware-dependent (None if hardware not provided):
         - compute_time_ms: Time to execute (accounts for parallelism)
-        - weight_load_time_ms: Time to load weights from memory
+        - load_time_ms: Time to load from memory (weights + KV cache during decode)
         - communication_bytes: Inter-package data transfer size
         - communication_time_ms: Time for inter-package communication
     
@@ -96,7 +96,7 @@ class LayerMetrics:
     
     # Hardware-dependent (optional)
     compute_time_ms: Optional[float] = None
-    weight_load_time_ms: Optional[float] = None
+    load_time_ms: Optional[float] = None
     communication_bytes: Optional[int] = None
     communication_time_ms: Optional[float] = None
     
@@ -305,7 +305,7 @@ class Layer(ABC):
         
         # Compute hardware-dependent metrics if config provided
         compute_time = None
-        weight_load_time = None
+        load_time = None
         comm_time = None
         
         # Derived metrics (initialized as None)
@@ -323,10 +323,14 @@ class Layer(ABC):
             if peak_flops > 0:
                 compute_time = (flops_per_package / peak_flops) * 1000  # Convert to ms
             
-            # Weight load time: bytes / bandwidth (per-package)
+            # Load time: weights + KV cache (decode only) / bandwidth
+            # During decode, we need to read the KV cache to compute attention
             mem_bw = hardware.get("memory_bandwidth_gb_s", 0) * 1e9
             if mem_bw > 0:
-                weight_load_time = (weight_mem_per_package / mem_bw) * 1000  # Convert to ms
+                load_bytes = weight_mem_per_package
+                if phase == Phase.DECODE and kv_cache_per_package > 0:
+                    load_bytes += kv_cache_per_package  # Add KV cache read during decode
+                load_time = (load_bytes / mem_bw) * 1000  # Convert to ms
             
             # Communication time (if communication bytes were computed)
             if comm_bytes is not None:
@@ -342,8 +346,8 @@ class Layer(ABC):
             # Compute derived/simulation metrics
             if compute_time is not None and compute_time > 0:
                 # Memory bandwidth per package: (weights + activations) / time
-                # Use the max of compute_time and weight_load_time for realistic estimate
-                effective_time_ms = max(compute_time, weight_load_time) if weight_load_time else compute_time
+                # Use the max of compute_time and load_time for realistic estimate
+                effective_time_ms = max(compute_time, load_time) if load_time else compute_time
                 
                 total_memory_bytes = weight_mem_per_package + activation_mem_per_package
                 memory_bw_per_package = (total_memory_bytes / (effective_time_ms / 1000)) / 1e9  # GB/s
@@ -356,19 +360,25 @@ class Layer(ABC):
             if comm_bytes is not None and comm_time is not None and comm_time > 0:
                 comm_bw = (comm_bytes / (comm_time / 1000)) / 1e9  # GB/s
             
-            # Wall clock time: consider compute/communication overlap
-            # Determine if overlap is possible (e.g., for TP all-reduce in row-parallel layers)
+            # Wall clock time: consider compute, memory load, and communication
+            # Memory load and compute can overlap (prefetching), so take max
+            # Communication typically happens after compute (all-reduce patterns)
             can_overlap = hardware.get("supports_overlap", False)
-            
-            if compute_time is not None and comm_time is not None:
+
+            # Effective compute time is bounded by either compute or memory load
+            effective_compute = compute_time
+            if load_time is not None:
+                effective_compute = max(compute_time, load_time) if compute_time else load_time
+
+            if effective_compute is not None and comm_time is not None:
                 if can_overlap:
-                    # Overlapped: wall clock is max of compute and communication
-                    wall_clock_time = max(compute_time, comm_time)
+                    # Overlapped: wall clock is max of effective compute and communication
+                    wall_clock_time = max(effective_compute, comm_time)
                 else:
-                    # Sequential: wall clock is sum
-                    wall_clock_time = compute_time + comm_time
-            elif compute_time is not None:
-                wall_clock_time = compute_time
+                    # Sequential: communication after compute
+                    wall_clock_time = effective_compute + comm_time
+            elif effective_compute is not None:
+                wall_clock_time = effective_compute
             elif comm_time is not None:
                 wall_clock_time = comm_time
         
@@ -382,7 +392,7 @@ class Layer(ABC):
             activation_memory_total=activation_mem_total,
             kv_cache_total=kv_cache_total,
             compute_time_ms=compute_time,
-            weight_load_time_ms=weight_load_time,
+            load_time_ms=load_time,
             communication_bytes=comm_bytes,
             communication_time_ms=comm_time,
             memory_bandwidth_per_package_GBps=memory_bw_per_package,

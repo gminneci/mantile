@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { Activity, AlertCircle, Copy, CheckCircle2, Server, Cpu, Layers, ChevronUp, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import LayerConfigCard from './components/LayerConfigCard';
 import MetricsDisplay from './components/MetricsDisplay';
+import LayerMetricsDisplay from './components/LayerMetricsDisplay';
 
 // --- API Client ---
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -85,6 +86,13 @@ export default function App() {
     layerConfigs: {}
   });
   const [comparisonMetrics, setComparisonMetrics] = useState(null);
+  
+  // Layer metrics selection state
+  const [selectedLayers, setSelectedLayers] = useState([]); // Max 2 items: {layerName, phase, side, metrics, selectionColor}
+  const selectedLayersRef = useRef(selectedLayers);
+  selectedLayersRef.current = selectedLayers; // Keep ref in sync
+  const [viewMode, setViewMode] = useState('system'); // 'system' or 'layer'
+  const [selectionError, setSelectionError] = useState(null);
   
   // Helper: derive dtype list from hardware capabilities
   const deriveDtypes = (hw) => {
@@ -435,6 +443,66 @@ export default function App() {
     JSON.stringify(comparisonConfig.layerConfigs)
   ]);
 
+  // Auto-refresh selected layer metrics when config changes
+  useEffect(() => {
+    const refreshLayerMetrics = async () => {
+      const currentLayers = selectedLayersRef.current;
+      if (currentLayers.length === 0) return;
+      
+      const updatedLayers = await Promise.all(
+        currentLayers.map(async (layer) => {
+          try {
+            const currentConfig = layer.configSide === 'comparison' ? comparisonConfig : config;
+            const phaseConfig = currentConfig[layer.phase];
+            const layerConfig = currentConfig.layerConfigs[layer.layerName];
+            
+            if (!layerConfig) return layer; // Keep existing if config not found
+            
+            const requestPayload = {
+              model_id: currentConfig.model,
+              hardware_id: phaseConfig.hardware,
+              batch_size: Number(phaseConfig.batchSize),
+              seq_len: Number(phaseConfig.seqLen),
+              layer_name: layer.layerName,
+              phase: layer.phase,
+              layer_config: {
+                tensor_parallel: layerConfig[layer.phase].tp_degree,
+                context_parallel: layerConfig[layer.phase].cp_degree,
+                sequence_parallel: layerConfig[layer.phase].sp_degree,
+                dtype: layerConfig.dtype
+              }
+            };
+            
+            const response = await axios.post(`${API_URL}/config/layer-metrics`, requestPayload);
+            return { ...layer, metrics: response.data };
+          } catch (err) {
+            console.error('Failed to refresh layer metrics:', err);
+            return layer; // Keep existing metrics on error
+          }
+        })
+      );
+      
+      setSelectedLayers(updatedLayers);
+    };
+    
+    refreshLayerMetrics();
+  }, [
+    config.prefill.hardware,
+    config.prefill.batchSize,
+    config.prefill.seqLen,
+    config.decode.hardware,
+    config.decode.batchSize,
+    config.decode.seqLen,
+    JSON.stringify(config.layerConfigs),
+    comparisonConfig.prefill.hardware,
+    comparisonConfig.prefill.batchSize,
+    comparisonConfig.prefill.seqLen,
+    comparisonConfig.decode.hardware,
+    comparisonConfig.decode.batchSize,
+    comparisonConfig.decode.seqLen,
+    JSON.stringify(comparisonConfig.layerConfigs)
+  ]);
+
   // Helper: Copy prefill config to decode (phase level only)
   const copyPrefillToDecodePhase = () => {
     setConfig(prev => ({
@@ -498,6 +566,102 @@ export default function App() {
     const hw = hardwareConfigs[hardwareId];
     if (!hw) return ['bf16', 'fp16', 'int8']; // Default fallback
     return deriveDtypes(hw);
+  };
+
+  // Layer selection handlers for layer metrics view
+  const handleLayerSelect = async (layer, phase, configSide) => {
+    // Check if this layer+phase is already selected from this sidebar
+    const existingSelection = selectedLayers.find(
+      l => l.layerName === layer.name && l.phase === phase && l.configSide === configSide
+    );
+    
+    if (existingSelection) {
+      // Deselect it
+      setSelectedLayers(prev => prev.filter(
+        l => !(l.layerName === layer.name && l.phase === phase && l.configSide === configSide)
+      ));
+      return;
+    }
+    
+    // Check max limit
+    if (selectedLayers.length >= 2) {
+      setSelectionError('Maximum 2 layers. Click a selected layer to deselect it first.');
+      setTimeout(() => setSelectionError(null), 3000);
+      return;
+    }
+    
+    try {
+      // Fetch layer metrics using the config from the appropriate sidebar
+      const currentConfig = configSide === 'comparison' ? comparisonConfig : config;
+      const phaseConfig = currentConfig[phase];
+      const layerConfig = currentConfig.layerConfigs[layer.name];
+      
+      if (!layerConfig) {
+        setSelectionError('Layer configuration not found');
+        setTimeout(() => setSelectionError(null), 3000);
+        return;
+      }
+      
+      const requestPayload = {
+        model_id: currentConfig.model,
+        hardware_id: phaseConfig.hardware,
+        batch_size: Number(phaseConfig.batchSize),
+        seq_len: Number(phaseConfig.seqLen),
+        layer_name: layer.name,
+        phase: phase,
+        layer_config: {
+          tensor_parallel: layerConfig[phase].tp_degree,
+          context_parallel: layerConfig[phase].cp_degree,
+          sequence_parallel: layerConfig[phase].sp_degree,
+          dtype: layerConfig.dtype
+        }
+      };
+      
+      // Call backend to get layer metrics
+      const response = await axios.post(`${API_URL}/config/layer-metrics`, requestPayload);
+      
+      // Colors matching LayerMetricsDisplay bar colors
+      const primaryLight = '#14B8A6';
+      const primaryDark = '#0A7566';   // Darker teal for better contrast
+      const comparisonLight = '#f96c56';
+      const comparisonDark = '#c43c2a'; // Darker orange for better contrast
+      
+      // Check if there's already a selection from the same side
+      const existingSameSide = selectedLayers.find(l => l.configSide === configSide);
+      
+      // If this is the second selection from the same side, use the dark shade
+      let selectionColor;
+      if (configSide === 'primary') {
+        selectionColor = existingSameSide ? primaryDark : primaryLight;
+      } else {
+        selectionColor = existingSameSide ? comparisonDark : comparisonLight;
+      }
+      
+      // Add to selected layers
+      setSelectedLayers(prev => [...prev, {
+        layerName: layer.name,
+        phase,
+        configSide,  // Which config panel it came from
+        metrics: response.data,
+        selectionColor
+      }]);
+      
+    } catch (err) {
+      console.error('Failed to load layer metrics:', err);
+      setSelectionError(err.response?.data?.detail || 'Failed to load layer metrics');
+      setTimeout(() => setSelectionError(null), 3000);
+    }
+  };
+
+  const isLayerSelected = (layerName, phase, sidebarConfigSide) => {
+    // Check if this layer+phase is selected from this specific sidebar
+    return selectedLayers.some(l => l.layerName === layerName && l.phase === phase && l.configSide === sidebarConfigSide);
+  };
+
+  const getLayerSelectionColor = (layerName, phase, sidebarConfigSide) => {
+    // Return the selection color for this layer+phase from this specific sidebar
+    const selected = selectedLayers.find(l => l.layerName === layerName && l.phase === phase && l.configSide === sidebarConfigSide);
+    return selected?.selectionColor || null;
   };
 
   return (
@@ -729,6 +893,11 @@ export default function App() {
                   phase="prefill"
                   maxParallelism={getMaxParallelism(config.prefill.hardware)}
                   availableDtypes={getAvailableDtypes(config.prefill.hardware)}
+                  isSelectable={viewMode === 'layer'}
+                  isSelected={isLayerSelected(layer.name, 'prefill', 'primary')}
+                  selectionColor={getLayerSelectionColor(layer.name, 'prefill', 'primary')}
+                  onSelect={handleLayerSelect}
+                  configSide="primary"
                 />
               ))}
             </div>
@@ -930,6 +1099,11 @@ export default function App() {
                   phase="decode"
                   maxParallelism={getMaxParallelism(config.decode.hardware)}
                   availableDtypes={getAvailableDtypes(config.decode.hardware)}
+                  isSelectable={viewMode === 'layer'}
+                  isSelected={isLayerSelected(layer.name, 'decode', 'primary')}
+                  selectionColor={getLayerSelectionColor(layer.name, 'decode', 'primary')}
+                  onSelect={handleLayerSelect}
+                  configSide="primary"
                 />
               ))}
             </div>
@@ -962,6 +1136,21 @@ export default function App() {
 
         {layers.length > 0 && (
           <>
+            {/* Selection error message */}
+            {selectionError && (
+              <motion.div
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-orange-500/10 border border-orange-500/50 rounded-lg p-4 mb-6 flex items-start gap-3"
+              >
+                <AlertCircle size={20} className="text-orange-500 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-orange-500 font-semibold">Selection Limit</p>
+                  <p className="text-orange-400 text-sm">{selectionError}</p>
+                </div>
+              </motion.div>
+            )}
+
             {/* Auto-computing status indicator */}
             {loading && (
               <div className="mb-4 flex items-center gap-2 text-sm text-gray-400">
@@ -970,12 +1159,24 @@ export default function App() {
               </div>
             )}
 
-            {/* Metrics Display */}
+            {/* Metrics Display with integrated tab control */}
             {metrics && (
               <MetricsDisplay 
                 key={`${metrics.tpot_ms}-${comparisonMetrics?.tpot_ms || 0}`}
                 metrics={metrics} 
                 comparisonMetrics={comparisonMode ? comparisonMetrics : null}
+                viewMode={viewMode}
+                onViewModeChange={(mode) => {
+                  setViewMode(mode);
+                  if (mode === 'system') {
+                    setSelectedLayers([]);
+                  }
+                }}
+                layerMetricsContent={
+                  <LayerMetricsDisplay 
+                    loadedLayers={selectedLayers}
+                  />
+                }
               />
             )}
           </>
@@ -1197,6 +1398,11 @@ export default function App() {
                         accentColor="#f96c56"
                         maxParallelism={getMaxParallelism(comparisonConfig.prefill.hardware)}
                         availableDtypes={getAvailableDtypes(comparisonConfig.prefill.hardware)}
+                        isSelectable={viewMode === 'layer'}
+                        isSelected={isLayerSelected(layer.name, 'prefill', 'comparison')}
+                        selectionColor={getLayerSelectionColor(layer.name, 'prefill', 'comparison')}
+                        onSelect={handleLayerSelect}
+                        configSide="comparison"
                       />
                     ))}
                   </div>
@@ -1420,6 +1626,11 @@ export default function App() {
                         accentColor="#f96c56"
                         maxParallelism={getMaxParallelism(comparisonConfig.decode.hardware)}
                         availableDtypes={getAvailableDtypes(comparisonConfig.decode.hardware)}
+                        isSelectable={viewMode === 'layer'}
+                        isSelected={isLayerSelected(layer.name, 'decode', 'comparison')}
+                        selectionColor={getLayerSelectionColor(layer.name, 'decode', 'comparison')}
+                        onSelect={handleLayerSelect}
+                        configSide="comparison"
                       />
                     ))}
                   </div>

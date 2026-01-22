@@ -13,7 +13,13 @@ export default function LayerConfigCard({
   phase = 'prefill', // 'prefill' or 'decode'
   accentColor = '#29AF83', // Default teal, can be overridden with orange
   maxParallelism = 8, // Maximum parallelism degree based on hardware
-  availableDtypes = ['bf16', 'fp16', 'int8'] // Available dtypes from hardware config
+  availableDtypes = ['bf16', 'fp16', 'int8'], // Available dtypes from hardware config
+  // Click selection props
+  isSelectable = false,
+  isSelected = false,
+  selectionColor = null,
+  onSelect = null,
+  configSide = 'primary' // Which sidebar this card belongs to
 }) {
   const availableStrategies = layer.available_parallelism || [];
   const phaseConfig = config?.[phase] || { tp_degree: 1, cp_degree: 1, sp_degree: 1 };
@@ -35,12 +41,30 @@ export default function LayerConfigCard({
     'sequence_parallel': { key: 'sp_degree', label: 'Sequence Parallel' }
   };
 
+  // Click handler for selection/deselection
+  const handleCardClick = (e) => {
+    // Only handle clicks if selectable and not on interactive elements
+    if (isSelectable && onSelect && !e.target.closest('input, select, button, label')) {
+      onSelect(layer, phase, configSide);
+    }
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, x: -20 }}
       animate={{ opacity: 1, x: 0 }}
       className="card"
-      style={{ backgroundColor: '#0F1729', border: '1px solid #526497', borderRadius: '8px', padding: '1rem', marginBottom: '0.75rem' }}
+      onClick={handleCardClick}
+      style={{ 
+        backgroundColor: '#0F1729', 
+        border: isSelected ? `2px solid ${selectionColor || accentColor}` : '1px solid #526497',
+        borderRadius: '8px', 
+        padding: '1rem', 
+        marginBottom: '0.75rem',
+        cursor: isSelectable ? 'pointer' : 'default',
+        transition: 'all 0.2s',
+        boxShadow: isSelected ? `0 0 20px ${selectionColor || accentColor}40` : 'none'
+      }}
     >
       <div className="flex justify-between items-start mb-3">
         <div>

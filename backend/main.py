@@ -194,8 +194,8 @@ def compute_phase_metrics(phase_req: PhaseMetricsRequest, phase: Phase) -> dict:
         # Aggregate timing from layer metrics (base.py computed these)
         if m.compute_time_ms is not None:
             compute_time_ms += m.compute_time_ms * num_instances
-        if m.weight_load_time_ms is not None:
-            memory_time_ms += m.weight_load_time_ms * num_instances
+        if m.load_time_ms is not None:
+            memory_time_ms += m.load_time_ms * num_instances
 
     return {
         "total_weight_memory_gb": total_weight_memory_gb,
@@ -204,6 +204,96 @@ def compute_phase_metrics(phase_req: PhaseMetricsRequest, phase: Phase) -> dict:
         "compute_time_ms": compute_time_ms,
         "memory_time_ms": memory_time_ms,
         "max_packages": max_packages,
+    }
+
+
+class LayerMetricsRequest(BaseModel):
+    """Request for computing metrics for a single layer."""
+    model_id: str
+    hardware_id: str
+    batch_size: int
+    seq_len: int
+    layer_name: str
+    phase: Phase
+    layer_config: Dict[str, Any]  # Contains tensor_parallel, context_parallel, sequence_parallel, dtype
+
+
+@app.post("/config/layer-metrics")
+def compute_layer_metrics(request: LayerMetricsRequest):
+    """
+    Compute metrics for a single layer.
+    
+    Args:
+        request: LayerMetricsRequest with layer-specific configuration
+        
+    Returns:
+        Dict with layer-specific metrics (FLOPs, memory, time, bottleneck)
+    """
+    # Load model and hardware config
+    model_cfg = load_model_config(request.model_id)
+    hardware_cfg = load_hardware_config(request.hardware_id)
+    
+    # Find the layer type in the model config
+    layer_type = next((lt for lt in model_cfg["layer_types"] if lt["name"] == request.layer_name), None)
+    if not layer_type:
+        raise HTTPException(status_code=404, detail=f"Layer '{request.layer_name}' not found in model config")
+    
+    # Parse dtype
+    dtype_str = request.layer_config.get("dtype", "bf16")
+    try:
+        dtype_enum = DataType[dtype_str.upper()]
+    except KeyError:
+        raise HTTPException(status_code=400, detail=f"Invalid dtype: {dtype_str}")
+    
+    # Resolve layer class
+    layer_class = _resolve_layer_class(layer_type["class"])
+    parallelism = {p: request.layer_config.get(p, 1) for p in layer_class.get_supported_parallelism()}
+    
+    # Construct layer instance
+    layer = _construct_layer(layer_class, layer_type["specs"], dtype_enum, parallelism)
+    
+    # Prepare hardware config for compute_metrics
+    hbm_memory = next((m for m in hardware_cfg['memory_per_package'] if 'HBM' in m['type']), hardware_cfg['memory_per_package'][0])
+    hardware_for_layer = {
+        'compute_per_package_PFlops': hardware_cfg['compute_per_package_PFlops'],
+        'memory_bandwidth_gb_s': hbm_memory['bandwidth_gbps'],
+        'interconnect_bandwidth_gb_s': hardware_cfg.get('interconnect_bandwidth_gbps', 0),
+        'interconnect_latency_us': hardware_cfg.get('interconnect_latency_us', 0)
+    }
+    
+    # Compute layer metrics (returns LayerMetrics dataclass)
+    metrics = layer.compute_metrics(
+        hardware=hardware_for_layer,
+        batch_size=request.batch_size,
+        seq_len=request.seq_len,
+        phase=request.phase
+    )
+    
+    # Extract values using dataclass attributes
+    compute_time = metrics.compute_time_ms or 0
+    load_time = metrics.load_time_ms or 0
+    
+    # Determine bottleneck
+    if compute_time > load_time * 1.2:
+        bottleneck = "compute"
+    elif load_time > compute_time * 1.2:
+        bottleneck = "memory"
+    else:
+        bottleneck = "balanced"
+    
+    return {
+        "layer_name": request.layer_name,
+        "layer_type": layer_type["class"],
+        "flops_per_package": metrics.flops_per_package,
+        "weight_memory_per_package": metrics.weight_memory_per_package,
+        "activation_memory_per_package": metrics.activation_memory_per_package,
+        "kv_cache_per_package": metrics.kv_cache_per_package,
+        "compute_time_ms": metrics.compute_time_ms,
+        "load_time_ms": metrics.load_time_ms,
+        "communication_time_ms": metrics.communication_time_ms,
+        "wall_clock_time_ms": metrics.wall_clock_time_ms,
+        "bottleneck": bottleneck,
+        "num_packages": metrics.num_packages,
     }
 
 

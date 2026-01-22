@@ -1,0 +1,59 @@
+======================================================================
+Mantile vs InferenceMAX Comparison Summary
+======================================================================
+
+Dataset: B200/NVL72, GPT-OSS 120B, FP4
+Configurations: 130
+
+======================================================================
+Overall Error Metrics (MAPE = Mean Absolute Percentage Error)
+======================================================================
+
+Throughput      MAPE:   76.2%  |  Median Error:    11.9%
+TTFT            MAPE:   55.5%  |  Median Error:   -60.5%
+TPOT            MAPE:   45.9%  |  Median Error:    13.0%
+E2E Latency     MAPE:   98.8%  |  Median Error:   -99.5%
+
+======================================================================
+By Framework
+======================================================================
+
+trt        MAPE:   74.1%  (74 configs)
+vllm       MAPE:   78.8%  (56 configs)
+
+======================================================================
+By Parallelism (TP)
+======================================================================
+
+TP= 1 MAPE:   53.9%  (24 configs)
+TP= 2 MAPE:   61.7%  (57 configs)
+TP= 4 MAPE:   85.5%  (37 configs)
+TP= 8 MAPE:  160.5%  (12 configs)
+
+======================================================================
+By Context Length
+======================================================================
+
+ISL=1024/OSL=1024  MAPE:   44.1%  (46 configs)
+ISL=1024/OSL=8192  MAPE:  119.8%  (44 configs)
+ISL=8192/OSL=1024  MAPE:   65.0%  (40 configs)
+
+======================================================================
+Top 5 Best Predictions (lowest absolute error)
+======================================================================
+
+ISL=8192/OSL=1024 TP=1 Conc=  4  Actual=  8373.9  Pred=   746.9  Error= -91.1%
+ISL=8192/OSL=1024 TP=1 Conc=  8  Actual= 13124.7  Pred=  1493.9  Error= -88.6%
+ISL=8192/OSL=1024 TP=2 Conc=  4  Actual=  6097.0  Pred=   746.9  Error= -87.7%
+ISL=8192/OSL=1024 TP=2 Conc=  8  Actual=  9873.3  Pred=  1493.9  Error= -84.9%
+ISL=8192/OSL=1024 TP=1 Conc= 16  Actual= 19728.4  Pred=  2987.8  Error= -84.9%
+
+======================================================================
+Top 5 Worst Predictions (highest absolute error)
+======================================================================
+
+ISL=1024/OSL=8192 TP=8 Conc=  8  Actual=   344.9  Pred=  1493.9  Error= 333.1%
+ISL=1024/OSL=8192 TP=8 Conc=  4  Actual=   193.3  Pred=   746.9  Error= 286.4%
+ISL=1024/OSL=8192 TP=4 Conc=128  Actual=  6326.4  Pred= 23900.9  Error= 277.8%
+ISL=1024/OSL=8192 TP=8 Conc= 16  Actual=   800.1  Pred=  2987.8  Error= 273.4%
+ISL=1024/OSL=8192 TP=4 Conc= 64  Actual=  3449.0  Pred= 11950.8  Error= 246.5%
