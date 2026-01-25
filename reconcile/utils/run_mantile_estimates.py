@@ -16,6 +16,7 @@ import requests
 from tqdm import tqdm
 
 from inferencemax_to_mantile import inferencemax_row_to_mantile_request
+from constants import CONFIG_COLUMNS
 
 
 def call_mantile_api(request: dict, api_url: str, timeout: int = 30) -> Optional[dict]:
@@ -82,6 +83,7 @@ def process_batch(
     input_csv: Path,
     output_csv: Path,
     api_url: str,
+    model_id: str,
     resume: bool = True
 ):
     """
@@ -91,6 +93,7 @@ def process_batch(
         input_csv: Path to filtered InferenceMAX CSV
         output_csv: Path to save predictions
         api_url: Mantile API base URL
+        model_id: Model configuration name (e.g., 'openai_GPT-OSS-120B')
         resume: If True, skip already processed rows
     """
     # Load input data
@@ -103,8 +106,7 @@ def process_batch(
         print(f"📋 Found {len(existing_df)} existing predictions, resuming...")
         # Create a set of already processed configs
         processed_configs = set(
-            tuple(row[['gpu_model', 'input_seq_len', 'output_seq_len', 
-                      'tensor_parallel', 'expert_parallel', 'concurrency']].values)
+            tuple(row[CONFIG_COLUMNS].values)
             for _, row in existing_df.iterrows()
         )
     else:
@@ -117,14 +119,13 @@ def process_batch(
     # Process each configuration
     for idx, row in tqdm(df.iterrows(), total=len(df), desc="Processing configs"):
         # Check if already processed
-        config_key = tuple(row[['gpu_model', 'input_seq_len', 'output_seq_len',
-                                'tensor_parallel', 'expert_parallel', 'concurrency']].values)
+        config_key = tuple(row[CONFIG_COLUMNS].values)
         if config_key in processed_configs:
             continue
         
         # Convert to Mantile request
         try:
-            request = inferencemax_row_to_mantile_request(row.to_dict())
+            request = inferencemax_row_to_mantile_request(row.to_dict(), model_id)
         except Exception as e:
             results.append({
                 **row.to_dict(),
@@ -190,6 +191,12 @@ def main():
         help='Output CSV for predictions'
     )
     parser.add_argument(
+        '--model',
+        type=str,
+        default='openai_GPT-OSS-120B',
+        help='Model configuration name'
+    )
+    parser.add_argument(
         '--api-url',
         type=str,
         default='http://localhost:8000',
@@ -216,6 +223,7 @@ def main():
         args.input,
         args.output,
         args.api_url,
+        args.model,
         resume=not args.no_resume
     )
 

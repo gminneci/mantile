@@ -1,68 +1,85 @@
 {
-    "model_id": "openai_GPT-OSS-120B",
-    "hf_model_id": "openai/gpt-oss-120b",
-    "name": "GPT-OSS-120B",
-    "hidden_size": 2880,
-    "num_layers": 36,
-    "vocab_size": 201088,
-    "total_params": 116829156672,
-    "total_params_formatted": "116.8B",
-    "layer_types": [
-        {
-            "name": "attention",
-            "class": "SlidingWindowAttentionLayer",
-            "count": 36,
-            "supported": true,
-            "specs": {
-                "layer_idx": 0,
-                "hidden_size": 2880,
-                "num_query_heads": 32,
-                "num_kv_heads": 4,
-                "head_dim": 128,
-                "sliding_window": 128,
-                "num_sinks": 64,
-                "has_bias": true,
-                "parameter_count": 26550080
-            }
-        },
-        {
-            "name": "feedforward",
-            "class": "MoELayer",
-            "count": 36,
-            "supported": true,
-            "specs": {
-                "num_experts": 128,
-                "top_k": 4,
-                "hidden_size": 2880,
-                "intermediate_size": 2880,
-                "parameter_count": 3209587200
-            }
-        },
-        {
-            "name": "norm",
-            "class": "NormLayer",
-            "count": 72,
-            "supported": true,
-            "specs": {
-                "hidden_size": 2880,
-                "parameter_count": 2880
-            }
-        },
-        {
-            "name": "embedding",
-            "class": "EmbeddingLayer",
-            "count": 1,
-            "supported": true,
-            "specs": {
-                "vocab_size": 201088,
-                "hidden_size": 2880,
-                "parameter_count": 579133440
-            }
-        }
-    ],
-    "validated": true,
-    "validation_notes": "Extracted via HF AutoConfig and dry-run tensor inspection. Confirmed 116.8B params. All layers fully supported including SlidingWindowAttentionLayer (SWA + sinks + bias) and MoELayer (128 experts, top_k=4).",
-    "validation_sources": [
-        "https://huggingface.co/openai/gpt-oss-120b"
-    ]
+  "model_id": "openai_GPT-OSS-120B",
+  "hf_model_id": "openai/gpt-oss-120b",
+  "name": "GPT-OSS-120B",
+  "hidden_size": 2880,
+  "num_layers": 36,
+  "vocab_size": 201088,
+  "total_params": 116829156672,
+  "total_params_formatted": "116.8B",
+  "layer_types": [
+    {
+      "name": "attention_sliding",
+      "class": "SlidingWindowAttentionLayer",
+      "count": 18,
+      "supported": true,
+      "specs": {
+        "layer_idx": 0,
+        "hidden_size": 2880,
+        "num_query_heads": 64,
+        "num_kv_heads": 8,
+        "head_dim": 64,
+        "sliding_window": 128,
+        "num_sinks": 64,
+        "has_bias": true,
+        "parameter_count": 19365120
+      }
+    },
+    {
+      "name": "attention_full",
+      "class": "GroupedQueryAttentionLayer",
+      "count": 18,
+      "supported": true,
+      "specs": {
+        "layer_idx": 0,
+        "hidden_size": 2880,
+        "num_heads": 64,
+        "num_kv_heads": 8,
+        "head_dim": 64,
+        "has_bias": true,
+        "parameter_count": 19365120
+      }
+    },
+    {
+      "name": "MoE",
+      "class": "MoELayer",
+      "count": 36,
+      "supported": true,
+      "specs": {
+        "num_experts": 128,
+        "top_k": 4,
+        "hidden_size": 2880,
+        "intermediate_size": 2880,
+        "num_projections": 3,
+        "has_bias": true,
+        "parameter_count": 3186524288
+      }
+    },
+    {
+      "name": "norm",
+      "class": "NormLayer",
+      "count": 72,
+      "supported": true,
+      "specs": {
+        "hidden_size": 2880,
+        "parameter_count": 2880
+      }
+    },
+    {
+      "name": "embedding",
+      "class": "EmbeddingLayer",
+      "count": 1,
+      "supported": true,
+      "specs": {
+        "vocab_size": 201088,
+        "hidden_size": 2880,
+        "parameter_count": 579133440
+      }
+    }
+  ],
+  "validated": true,
+  "validation_notes": "GPT-OSS-120B (116.8B params). Architecture alternates between sliding window attention (128 token window, even layer indices) and full attention (odd layer indices). 18 layers each type. MoE with 128 experts, top_k=4. All projections include bias terms.",
+  "validation_sources": [
+    "https://huggingface.co/openai/gpt-oss-120b"
+  ]
 }

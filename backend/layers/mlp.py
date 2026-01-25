@@ -34,14 +34,15 @@ class MLPLayer(Layer):
     """
     
     SUPPORTED_PARALLELISM = {"tensor_parallel", "pipeline_parallel", "sequence_parallel"}
+    default_kernel_count = 3  # Up proj + activation (fused), down proj (assumes SwiGLU)
     
     def __init__(
         self,
         layer_idx: int,
         hidden_size: int,
         intermediate_size: int,
+        dtype: DataType | str,
         num_projections: int = 2,
-        dtype: DataType | str = "bf16",
         parallelism: Optional[dict] = None
     ):
         """
@@ -152,7 +153,7 @@ class MLPLayer(Layer):
         seq_len: int,
         phase: Phase,
         hardware: dict
-    ) -> Optional[int]:
+    ) -> int:
         """
         Communication for MLP with TP and SP:
         - Tensor parallel: All-reduce on output (B*S*H bytes)
@@ -185,7 +186,7 @@ class MLPLayer(Layer):
             # Reduce-scatter output: reduce and scatter back to sequence shards
             comm_bytes += B * S * H * self.dtype.bytes_per_element
         
-        return int(comm_bytes) if comm_bytes > 0 else None
+        return int(comm_bytes)
 
 
 class GatedMLPLayer(MLPLayer):
@@ -201,7 +202,7 @@ class GatedMLPLayer(MLPLayer):
         layer_idx: int,
         hidden_size: int,
         intermediate_size: int,
-        dtype: DataType | str = "bf16",
+        dtype: DataType | str,
         parallelism: Optional[dict] = None
     ):
         super().__init__(

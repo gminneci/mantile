@@ -10,11 +10,13 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
+from constants import CONFIG_COLUMNS, COMPARISON_METRICS, METRIC_DISPLAY_NAMES
+
 
 def calculate_error_metrics(actual, predicted):
-    """Calculate absolute and percentage errors."""
+    """Calculate absolute and percentage errors for pandas Series or scalar values."""
     abs_error = predicted - actual
-    pct_error = (abs_error / actual) * 100 if actual != 0 else np.nan
+    pct_error = (abs_error / actual) * 100
     return abs_error, pct_error
 
 
@@ -39,11 +41,9 @@ def compare_predictions(actuals_path: Path, predictions_path: Path, output_path:
     
     # Since predictions were generated from actuals, they should have the same index
     # But let's merge on config keys to be safe
-    config_cols = ['gpu_model', 'input_seq_len', 'output_seq_len', 
-                   'tensor_parallel', 'expert_parallel', 'concurrency']
     
     # Prepare actuals
-    actuals_clean = actuals[config_cols + [
+    actuals_clean = actuals[CONFIG_COLUMNS + [
         'framework',
         'throughput_tokens_per_sec_per_gpu',
         'mean_time_to_first_token_sec',
@@ -78,18 +78,10 @@ def compare_predictions(actuals_path: Path, predictions_path: Path, output_path:
     print(f"✅ Merged {len(comparison)} matching configurations")
     
     # Calculate errors for each metric
-    metrics = [
-        ('throughput', 'actual_throughput', 'predicted_throughput_per_gpu'),
-        ('ttft', 'actual_ttft', 'predicted_ttft_sec'),
-        ('tpot', 'actual_tpot', 'predicted_tpot_sec'),
-        ('e2e_latency', 'actual_e2e_latency', 'predicted_e2e_latency_sec')
-    ]
-    
-    for metric_name, actual_col, pred_col in metrics:
-        comparison[f'{metric_name}_abs_error'] = comparison[pred_col] - comparison[actual_col]
-        comparison[f'{metric_name}_pct_error'] = (
-            (comparison[pred_col] - comparison[actual_col]) / comparison[actual_col] * 100
-        )
+    for metric_name, actual_col, pred_col in COMPARISON_METRICS:
+        abs_error, pct_error = calculate_error_metrics(comparison[actual_col], comparison[pred_col])
+        comparison[f'{metric_name}_abs_error'] = abs_error
+        comparison[f'{metric_name}_pct_error'] = pct_error
     
     # Save comparison
     comparison.to_csv(output_path, index=False)
@@ -118,14 +110,7 @@ def generate_summary(comparison: pd.DataFrame, summary_path: Path):
         ""
     ]
     
-    metrics = {
-        'Throughput': 'throughput_pct_error',
-        'TTFT': 'ttft_pct_error',
-        'TPOT': 'tpot_pct_error',
-        'E2E Latency': 'e2e_latency_pct_error'
-    }
-    
-    for metric_name, col in metrics.items():
+    for col, metric_name in METRIC_DISPLAY_NAMES.items():
         if col in comparison.columns:
             mape = comparison[col].abs().mean()
             rmse = np.sqrt((comparison[col] ** 2).mean())
@@ -199,25 +184,40 @@ def generate_summary(comparison: pd.DataFrame, summary_path: Path):
 def main():
     parser = argparse.ArgumentParser(description='Compare Mantile predictions with InferenceMAX actuals')
     parser.add_argument(
+        '--model',
+        type=str,
+        default='openai_GPT-OSS-120B',
+        help='Model configuration name'
+    )
+    parser.add_argument(
         '--actuals',
         type=Path,
-        default=Path('reconcile/by_model/openai_GPT-OSS-120B/inferencemax_b200_only.csv'),
-        help='InferenceMAX actuals CSV'
+        default=None,
+        help='InferenceMAX actuals CSV (default: reconcile/by_model/{model}/inferencemax_b200_only.csv)'
     )
     parser.add_argument(
         '--predictions',
         type=Path,
-        default=Path('reconcile/by_model/openai_GPT-OSS-120B/mantile_predictions.csv'),
-        help='Mantile predictions CSV'
+        default=None,
+        help='Mantile predictions CSV (default: reconcile/by_model/{model}/mantile_predictions.csv)'
     )
     parser.add_argument(
         '--output',
         type=Path,
-        default=Path('reconcile/by_model/openai_GPT-OSS-120B/comparison_report.csv'),
-        help='Output comparison CSV'
+        default=None,
+        help='Output comparison CSV (default: reconcile/by_model/{model}/comparison_report.csv)'
     )
     
     args = parser.parse_args()
+    
+    # Set defaults based on model
+    model_dir = Path(f'reconcile/by_model/{args.model}')
+    if args.actuals is None:
+        args.actuals = model_dir / 'inferencemax_b200_only.csv'
+    if args.predictions is None:
+        args.predictions = model_dir / 'mantile_predictions.csv'
+    if args.output is None:
+        args.output = model_dir / 'comparison_report.csv'
     
     compare_predictions(args.actuals, args.predictions, args.output)
 

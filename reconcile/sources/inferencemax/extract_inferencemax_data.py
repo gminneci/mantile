@@ -33,6 +33,7 @@ import json
 import os
 import subprocess
 import sys
+import argparse
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
@@ -143,6 +144,41 @@ def download_benchmark_data(run_id: str, output_dir: Path) -> bool:
         return False
 
 
+def get_column_mapping(include_metadata: bool = False) -> Dict[str, str]:
+    """
+    Get the standard column mapping for InferenceMAX data.
+    
+    Args:
+        include_metadata: If True, includes run_date and run_id columns
+    
+    Returns:
+        Dictionary mapping raw column names to standardized names
+    """
+    mapping = {
+        'hw': 'gpu_model',
+        'framework': 'framework',
+        'precision': 'precision',
+        'isl': 'input_seq_len',
+        'osl': 'output_seq_len',
+        'tp': 'tensor_parallel',
+        'ep': 'expert_parallel',
+        'conc': 'concurrency',
+        'tput_per_gpu': 'throughput_tokens_per_sec_per_gpu',
+        'output_tput_per_gpu': 'output_throughput_per_gpu',
+        'mean_ttft': 'mean_time_to_first_token_sec',
+        'p99_ttft': 'p99_time_to_first_token_sec',
+        'mean_tpot': 'mean_time_per_output_token_sec',
+        'mean_e2el': 'mean_end_to_end_latency_sec',
+        'median_e2el': 'median_end_to_end_latency_sec',
+    }
+    
+    if include_metadata:
+        mapping['run_date'] = 'benchmark_date'
+        mapping['run_id'] = 'run_id'
+    
+    return mapping
+
+
 def filter_gptoss_data(data: List[Dict]) -> List[Dict]:
     """Filter for GPT-OSS 120B results."""
     return [
@@ -167,23 +203,7 @@ def convert_to_csv(json_path: Path, output_csv: Path):
     df = pd.DataFrame(gptoss_data)
     
     # Select and rename columns for clarity
-    columns_of_interest = {
-        'hw': 'gpu_model',
-        'framework': 'framework',
-        'precision': 'precision',
-        'isl': 'input_seq_len',
-        'osl': 'output_seq_len',
-        'tp': 'tensor_parallel',
-        'ep': 'expert_parallel',
-        'conc': 'concurrency',
-        'tput_per_gpu': 'throughput_tokens_per_sec_per_gpu',
-        'output_tput_per_gpu': 'output_throughput_per_gpu',
-        'mean_ttft': 'mean_time_to_first_token_sec',
-        'p99_ttft': 'p99_time_to_first_token_sec',
-        'mean_tpot': 'mean_time_per_output_token_sec',
-        'mean_e2el': 'mean_end_to_end_latency_sec',
-        'median_e2el': 'median_end_to_end_latency_sec',
-    }
+    columns_of_interest = get_column_mapping(include_metadata=False)
     
     # Filter columns that exist
     available_cols = {k: v for k, v in columns_of_interest.items() if k in df.columns}
@@ -258,7 +278,44 @@ def merge_and_deduplicate(dataframes: List[pd.DataFrame]) -> pd.DataFrame:
 
 def main():
     """Main extraction workflow."""
-    print("🔍 Extracting GPT-OSS 120B data from InferenceMAX...")
+    parser = argparse.ArgumentParser(
+        description='Extract model benchmark data from InferenceMAX',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''Examples:
+  # Extract GPT-OSS-120B data from specific run
+  python extract_inferencemax_data.py 21012127808
+  
+  # Extract from multiple runs (merges, keeps most recent)
+  python extract_inferencemax_data.py 21012127808 20764588467
+  
+  # Auto-collect from 5 most recent runs
+  python extract_inferencemax_data.py --collect-recent 5
+  
+  # Extract different model
+  python extract_inferencemax_data.py --model meta-llama_Llama-3.3-70B-Instruct --collect-recent 10
+        '''
+    )
+    parser.add_argument(
+        'run_ids',
+        nargs='*',
+        help='GitHub Actions run IDs to process'
+    )
+    parser.add_argument(
+        '--collect-recent',
+        type=int,
+        metavar='N',
+        help='Auto-collect from N most recent successful runs'
+    )
+    parser.add_argument(
+        '--model',
+        type=str,
+        default='openai_GPT-OSS-120B',
+        help='Model configuration name (default: openai_GPT-OSS-120B)'
+    )
+    
+    args = parser.parse_args()
+    
+    print(f"🔍 Extracting {args.model} data from InferenceMAX...")
     
     # Check for gh CLI
     try:
@@ -268,31 +325,19 @@ def main():
         print("   Then authenticate: gh auth login", file=sys.stderr)
         sys.exit(1)
     
-    # Parse arguments
-    run_ids = []
-    collect_recent = None
-    
-    for arg in sys.argv[1:]:
-        if arg.startswith("--collect-recent"):
-            if "=" in arg:
-                collect_recent = int(arg.split("=")[1])
-            else:
-                collect_recent = 10  # default
-        elif arg.isdigit():
-            run_ids.append(arg)
-    
     # Determine which runs to process
-    if collect_recent:
-        print(f"🔎 Finding {collect_recent} most recent successful benchmark runs...")
-        runs = get_recent_benchmark_runs(collect_recent)
+    runs = []
+    if args.collect_recent:
+        print(f"🔎 Finding {args.collect_recent} most recent successful benchmark runs...")
+        runs = get_recent_benchmark_runs(args.collect_recent)
         if not runs:
             print("❌ Could not find recent runs", file=sys.stderr)
             sys.exit(1)
         print(f"✅ Found {len(runs)} runs")
-    elif run_ids:
+    elif args.run_ids:
         # Get dates for provided run IDs
         runs = []
-        for run_id in run_ids:
+        for run_id in args.run_ids:
             try:
                 result = subprocess.run(
                     ["gh", "api", f"/repos/InferenceMAX/InferenceMAX/actions/runs/{run_id}"],
@@ -354,25 +399,7 @@ def main():
     merged = merge_and_deduplicate(dataframes)
     
     # Select and rename columns for final output
-    columns_of_interest = {
-        'hw': 'gpu_model',
-        'framework': 'framework',
-        'precision': 'precision',
-        'isl': 'input_seq_len',
-        'osl': 'output_seq_len',
-        'tp': 'tensor_parallel',
-        'ep': 'expert_parallel',
-        'conc': 'concurrency',
-        'tput_per_gpu': 'throughput_tokens_per_sec_per_gpu',
-        'output_tput_per_gpu': 'output_throughput_per_gpu',
-        'mean_ttft': 'mean_time_to_first_token_sec',
-        'p99_ttft': 'p99_time_to_first_token_sec',
-        'mean_tpot': 'mean_time_per_output_token_sec',
-        'mean_e2el': 'mean_end_to_end_latency_sec',
-        'median_e2el': 'median_end_to_end_latency_sec',
-        'run_date': 'benchmark_date',
-        'run_id': 'run_id',
-    }
+    columns_of_interest = get_column_mapping(include_metadata=True)
     
     available_cols = {k: v for k, v in columns_of_interest.items() if k in merged.columns}
     final_df = merged[list(available_cols.keys())].rename(columns=available_cols)
@@ -383,7 +410,7 @@ def main():
     final_df = final_df.sort_values(sort_cols)
     
     # Save to CSV in model-specific directory
-    output_csv = Path("../../by_model/openai_GPT-OSS-120B/inferencemax.csv")
+    output_csv = Path(f"../../by_model/{args.model}/inferencemax.csv")
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     final_df.to_csv(output_csv, index=False)
     

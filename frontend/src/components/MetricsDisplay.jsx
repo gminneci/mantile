@@ -1,22 +1,15 @@
 import React, { useState } from 'react';
-import { Activity, Server, Zap, Database, Clock, Layers, Cpu, HardDrive, CheckCircle, AlertTriangle, DollarSign } from 'lucide-react';
+import { Activity, Server, Zap, Database, Clock, Layers, Cpu, HardDrive, CheckCircle, AlertTriangle, DollarSign, Copy, Check } from 'lucide-react';
 import { motion } from 'framer-motion';
-
-// Helper function to format numbers with comma separators and fixed decimals
-const formatNumber = (num, decimals = 2) => {
-  if (num === null || num === undefined) return 'N/A';
-  const fixed = num.toFixed(decimals);
-  const [integer, decimal] = fixed.split('.');
-  const formattedInteger = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  return decimal !== undefined ? `${formattedInteger}.${decimal}` : formattedInteger;
-};
+import { formatNumber } from '../utils/formatters';
+import { MEMORY_COLORS } from '../utils/constants';
 
 // Helper function to format time values with automatic unit conversion
-// Converts ms to seconds if > 999,999 ms and adds space between number and unit
+// Converts ms to seconds if >= 1000 ms (1 second)
 const formatTime = (valueMs, decimals = 2) => {
   if (valueMs === null || valueMs === undefined) return { value: 'N/A', unit: 'ms' };
   
-  if (valueMs > 999999) {
+  if (valueMs >= 1000) {
     const valueS = valueMs / 1000;
     return { value: formatNumber(valueS, decimals), unit: 's' };
   }
@@ -118,7 +111,7 @@ function StackedBarChart({ label, primaryMemory, comparisonMemory = null, delay 
               style={{ 
                 width: `${primaryWeightPercent}%`,
                 height: '100%', 
-                backgroundColor: weightColor,
+                backgroundColor: MEMORY_COLORS.primary.weight,
               }}
               title={`Weights: ${formatNumber(primaryMemory.weight_memory_gb, 1)} GB`}
             />
@@ -126,7 +119,7 @@ function StackedBarChart({ label, primaryMemory, comparisonMemory = null, delay 
               style={{ 
                 width: `${primaryActivationPercent}%`,
                 height: '100%', 
-                backgroundColor: activationColor,
+                backgroundColor: MEMORY_COLORS.primary.activation,
               }}
               title={`Activations: ${formatNumber(primaryMemory.activation_memory_gb, 1)} GB`}
             />
@@ -134,7 +127,7 @@ function StackedBarChart({ label, primaryMemory, comparisonMemory = null, delay 
               style={{ 
                 width: `${primaryKvPercent}%`,
                 height: '100%', 
-                backgroundColor: kvColor,
+                backgroundColor: MEMORY_COLORS.primary.kv,
               }}
               title={`KV Cache: ${formatNumber(primaryMemory.kv_cache_gb, 1)} GB`}
             />
@@ -143,15 +136,15 @@ function StackedBarChart({ label, primaryMemory, comparisonMemory = null, delay 
         {/* Legend for primary */}
         <div className="flex gap-4 mt-2 text-xs" style={{ color: '#6B7280' }}>
           <div className="flex items-center gap-1">
-            <div style={{ width: '12px', height: '12px', backgroundColor: weightColor, borderRadius: '2px' }} />
+            <div style={{ width: '12px', height: '12px', backgroundColor: MEMORY_COLORS.primary.weight, borderRadius: '2px' }} />
             <span>Weights: {formatNumber(primaryMemory.weight_memory_gb, 1)} GB</span>
           </div>
           <div className="flex items-center gap-1">
-            <div style={{ width: '12px', height: '12px', backgroundColor: activationColor, borderRadius: '2px' }} />
+            <div style={{ width: '12px', height: '12px', backgroundColor: MEMORY_COLORS.primary.activation, borderRadius: '2px' }} />
             <span>Activations: {formatNumber(primaryMemory.activation_memory_gb, 1)} GB</span>
           </div>
           <div className="flex items-center gap-1">
-            <div style={{ width: '12px', height: '12px', backgroundColor: kvColor, borderRadius: '2px' }} />
+            <div style={{ width: '12px', height: '12px', backgroundColor: MEMORY_COLORS.primary.kv, borderRadius: '2px' }} />
             <span>KV Cache: {formatNumber(primaryMemory.kv_cache_gb, 1)} GB</span>
           </div>
         </div>
@@ -188,7 +181,7 @@ function StackedBarChart({ label, primaryMemory, comparisonMemory = null, delay 
                 style={{ 
                   width: `${comparisonWeightPercent}%`,
                   height: '100%', 
-                  backgroundColor: compWeightColor,
+                  backgroundColor: MEMORY_COLORS.comparison.weight,
                 }}
                 title={`Weights: ${formatNumber(comparisonMemory.weight_memory_gb, 1)} GB`}
               />
@@ -196,7 +189,7 @@ function StackedBarChart({ label, primaryMemory, comparisonMemory = null, delay 
                 style={{ 
                   width: `${comparisonActivationPercent}%`,
                   height: '100%', 
-                  backgroundColor: compActivationColor,
+                  backgroundColor: MEMORY_COLORS.comparison.activation,
                 }}
                 title={`Activations: ${formatNumber(comparisonMemory.activation_memory_gb, 1)} GB`}
               />
@@ -204,7 +197,7 @@ function StackedBarChart({ label, primaryMemory, comparisonMemory = null, delay 
                 style={{ 
                   width: `${comparisonKvPercent}%`,
                   height: '100%', 
-                  backgroundColor: compKvColor,
+                  backgroundColor: MEMORY_COLORS.comparison.kv,
                 }}
                 title={`KV Cache: ${formatNumber(comparisonMemory.kv_cache_gb, 1)} GB`}
               />
@@ -213,15 +206,15 @@ function StackedBarChart({ label, primaryMemory, comparisonMemory = null, delay 
           {/* Legend for comparison */}
           <div className="flex gap-4 mt-2 text-xs" style={{ color: '#6B7280' }}>
             <div className="flex items-center gap-1">
-              <div style={{ width: '12px', height: '12px', backgroundColor: compWeightColor, borderRadius: '2px' }} />
+              <div style={{ width: '12px', height: '12px', backgroundColor: MEMORY_COLORS.comparison.weight, borderRadius: '2px' }} />
               <span>Weights: {formatNumber(comparisonMemory.weight_memory_gb, 1)} GB</span>
             </div>
             <div className="flex items-center gap-1">
-              <div style={{ width: '12px', height: '12px', backgroundColor: compActivationColor, borderRadius: '2px' }} />
+              <div style={{ width: '12px', height: '12px', backgroundColor: MEMORY_COLORS.comparison.activation, borderRadius: '2px' }} />
               <span>Activations: {formatNumber(comparisonMemory.activation_memory_gb, 1)} GB</span>
             </div>
             <div className="flex items-center gap-1">
-              <div style={{ width: '12px', height: '12px', backgroundColor: compKvColor, borderRadius: '2px' }} />
+              <div style={{ width: '12px', height: '12px', backgroundColor: MEMORY_COLORS.comparison.kv, borderRadius: '2px' }} />
               <span>KV Cache: {formatNumber(comparisonMemory.kv_cache_gb, 1)} GB</span>
             </div>
           </div>
@@ -369,11 +362,23 @@ export default function MetricsDisplay({
   onViewModeChange = null,
   layerMetricsContent = null
 }) {
+  const [copied, setCopied] = useState(false);
+  
   const activeTab = viewMode;
   const setActiveTab = (mode) => {
     if (onViewModeChange) {
       onViewModeChange(mode);
     }
+  };
+  
+  const handleCopyDebugDetails = () => {
+    const debugData = {
+      primary: metrics,
+      ...(hasComparison && { comparison: comparisonMetrics })
+    };
+    navigator.clipboard.writeText(JSON.stringify(debugData, null, 2));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
   
   if (!metrics) return null;
@@ -674,20 +679,53 @@ export default function MetricsDisplay({
         </div>
       ))}
 
-      {/* Debug: Show raw data */}
+      {/* Debug details with copy button - only for System Metrics tab */}
+      {activeTab === 'system' && (
       <details className="mt-4" style={{ paddingLeft: '1.4rem', paddingRight: '1.4rem' }}>
         <summary className="text-xs cursor-pointer" style={{ color: '#6B7280' }}>
-          View raw metrics data
+          Debug details
         </summary>
-        <div className="mt-2 p-3 rounded" style={{ backgroundColor: '#1F2937' }}>
-          <div className="mb-2">
+        <div className="mt-2 p-3 rounded" style={{ backgroundColor: '#1F2937', position: 'relative' }}>
+          <button
+            onClick={handleCopyDebugDetails}
+            style={{
+              position: 'absolute',
+              top: '0.75rem',
+              right: '0.75rem',
+              padding: '0.5rem',
+              backgroundColor: copied ? '#10B981' : '#374151',
+              borderRadius: '0.375rem',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              transition: 'all 0.2s'
+            }}
+            onMouseEnter={(e) => {
+              if (!copied) e.currentTarget.style.backgroundColor = '#4B5563';
+            }}
+            onMouseLeave={(e) => {
+              if (!copied) e.currentTarget.style.backgroundColor = '#374151';
+            }}
+          >
+            {copied ? (
+              <Check size={16} style={{ color: '#FFFFFF' }} />
+            ) : (
+              <Copy size={16} style={{ color: '#9CA3AF' }} />
+            )}
+            <span style={{ fontSize: '0.75rem', color: copied ? '#FFFFFF' : '#9CA3AF' }}>
+              {copied ? 'Copied!' : 'Copy'}
+            </span>
+          </button>
+          <div className="mb-2" style={{ paddingRight: '5rem' }}>
             <span className="text-xs font-semibold" style={{ color: '#10B981' }}>Primary:</span>
             <pre className="text-xs mt-1 overflow-auto max-h-64" style={{ color: '#D1D5DB' }}>
               {JSON.stringify(metrics, null, 2)}
             </pre>
           </div>
           {hasComparison && (
-            <div>
+            <div style={{ paddingRight: '5rem' }}>
               <span className="text-xs font-semibold" style={{ color: '#f96c56' }}>Comparison:</span>
               <pre className="text-xs mt-1 overflow-auto max-h-64" style={{ color: '#D1D5DB' }}>
                 {JSON.stringify(comparisonMetrics, null, 2)}
@@ -696,6 +734,7 @@ export default function MetricsDisplay({
           )}
         </div>
       </details>
+      )}
     </div>
   );
 }

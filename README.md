@@ -94,6 +94,21 @@ The frontend is a React application built with Vite, providing an interactive UI
 
 ---
 
+## Model Reconciliation
+
+Mantile includes tools for validating and calibrating performance estimates against real-world benchmark data from public sources like InferenceMAX.
+
+**Workflow:**
+1. Extract benchmark data from public sources
+2. Generate Mantile predictions for same configurations
+3. Compare and analyze prediction errors
+4. Calibrate model parameters based on findings
+
+**Details:**  
+→ See [reconcile/README.md](/reconcile/README.md)
+
+---
+
 ## Roadmap
 
 ### Layer-Level Metrics
@@ -102,8 +117,11 @@ The frontend is a React application built with Vite, providing an interactive UI
 - [ ] Support layer-by-layer profiling to identify optimization opportunities
 
 ### Validation & Calibration
-- [ ] Validate predictions against real inference frameworks and public data
-- [ ] Calibrate model FLOPs utilization (MFU)
+- [x] Build reconciliation infrastructure for comparing predictions with benchmarks
+- [x] Extract and standardize data from InferenceMAX
+- [x] Automated batch prediction and comparison workflows
+- [ ] Calibrate model FLOPs utilization (MFU) based on benchmark data
+- [ ] Expand to additional benchmark sources and models
 
 ### Agentic IR Builder
 - [ ] Make IR builder autonomous: automatically infer model architectures from HuggingFace configs

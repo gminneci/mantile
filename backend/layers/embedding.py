@@ -7,6 +7,11 @@ This module provides embedding layer implementation for token embeddings.
 from typing import Optional
 from .base import Layer, Phase, DataType
 
+# Threshold above which vocab is sharded across TP (rather than replicated)
+# Rationale: Small vocabs (<100K) fit comfortably on chip and benefit from replication
+# (no all-reduce needed). Large vocabs (>100K) are memory-expensive and benefit from sharding.
+VOCAB_SHARD_THRESHOLD = 100_000
+
 
 class EmbeddingLayer(Layer):
     """
@@ -29,12 +34,13 @@ class EmbeddingLayer(Layer):
     """
     
     SUPPORTED_PARALLELISM = {"tensor_parallel", "pipeline_parallel"}
+    default_kernel_count = 1  # Single embedding lookup kernel
     
     def __init__(
         self,
         vocab_size: int,
         hidden_size: int,
-        dtype: DataType | str = "bf16",
+        dtype: DataType | str,
         parallelism: Optional[dict] = None
     ):
         """
@@ -78,9 +84,9 @@ class EmbeddingLayer(Layer):
         """
         tp = self.parallelism.get("tensor_parallel", 1)
         
-        # For very large vocabs (>100K), consider sharding
-        # Otherwise, replicate for simplicity
-        if self.vocab_size > 100000:
+        # For very large vocabs, shard across TP to reduce per-chip memory
+        # Otherwise, replicate for simplicity (no all-reduce needed)
+        if self.vocab_size > VOCAB_SHARD_THRESHOLD:
             # Shard by vocab dimension
             params_per_chip = self.param_count // tp
         else:
@@ -128,7 +134,7 @@ class EmbeddingLayer(Layer):
         """
         tp = self.parallelism.get("tensor_parallel", 1)
         
-        if tp > 1 and self.vocab_size > 100000:
+        if tp > 1 and self.vocab_size > VOCAB_SHARD_THRESHOLD:
             # Vocab sharded, need all-reduce on output
             B = batch_size
             H = self.hidden_size
@@ -138,4 +144,4 @@ class EmbeddingLayer(Layer):
             comm_bytes = B * S * H * self.dtype.bytes_per_element
             return int(comm_bytes)
         
-        return None
+        return 0

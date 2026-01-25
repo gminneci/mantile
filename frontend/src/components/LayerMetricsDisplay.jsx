@@ -1,15 +1,8 @@
-import React from 'react';
-import { Layers } from 'lucide-react';
+import React, { useState } from 'react';
+import { Layers, Copy, Check } from 'lucide-react';
 import { motion } from 'framer-motion';
-
-// Helper function to format numbers with comma separators and fixed decimals
-const formatNumber = (num, decimals = 2) => {
-  if (num === null || num === undefined || isNaN(num)) return 'N/A';
-  const fixed = num.toFixed(decimals);
-  const [integer, decimal] = fixed.split('.');
-  const formattedInteger = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  return decimal !== undefined ? `${formattedInteger}.${decimal}` : formattedInteger;
-};
+import { formatNumber } from '../utils/formatters';
+import { CHART_COLORS } from '../utils/constants';
 
 // Helper function to format bytes to appropriate unit
 const formatBytes = (bytes) => {
@@ -37,15 +30,10 @@ const getLayerLabel = (layer) => {
 
 // Get colors for layers based on their configSide
 const getLayerColors = (layer1, layer2) => {
-  const primaryColor = '#14B8A6';      // Teal (matches panel highlight)
-  const primaryDark = '#0A7566';       // Darker teal for better contrast
-  const comparisonColor = '#f96c56';   // Orange (matches panel highlight)
-  const comparisonDark = '#c43c2a';    // Darker orange for better contrast
-
   if (!layer2) {
     // Single layer - use appropriate color based on configSide
     return {
-      color1: layer1.configSide === 'comparison' ? comparisonColor : primaryColor,
+      color1: layer1.configSide === 'comparison' ? CHART_COLORS.comparison : CHART_COLORS.primary,
       label1: getLayerLabel(layer1)
     };
   }
@@ -55,15 +43,15 @@ const getLayerColors = (layer1, layer2) => {
     // Same side - use light and dark shades of same color
     if (layer1.configSide === 'primary') {
       return {
-        color1: primaryColor,
-        color2: primaryDark,
+        color1: CHART_COLORS.primary,
+        color2: CHART_COLORS.primaryDark,
         label1: getLayerLabel(layer1),
         label2: getLayerLabel(layer2)
       };
     } else {
       return {
-        color1: comparisonColor,
-        color2: comparisonDark,
+        color1: CHART_COLORS.comparison,
+        color2: CHART_COLORS.comparisonDark,
         label1: getLayerLabel(layer1),
         label2: getLayerLabel(layer2)
       };
@@ -72,15 +60,15 @@ const getLayerColors = (layer1, layer2) => {
     // Different sides - use green for primary, orange for comparison
     if (layer1.configSide === 'primary') {
       return {
-        color1: primaryColor,
-        color2: comparisonColor,
+        color1: CHART_COLORS.primary,
+        color2: CHART_COLORS.comparison,
         label1: getLayerLabel(layer1),
         label2: getLayerLabel(layer2)
       };
     } else {
       return {
-        color1: comparisonColor,
-        color2: primaryColor,
+        color1: CHART_COLORS.comparison,
+        color2: CHART_COLORS.primary,
         label1: getLayerLabel(layer1),
         label2: getLayerLabel(layer2)
       };
@@ -317,6 +305,21 @@ function TimingBreakdownCard({ metrics1, metrics2, delay, colors, isSingleLayer 
  * Matches the system metrics styling with cream cards and horizontal bar charts
  */
 export default function LayerMetricsDisplay({ loadedLayers }) {
+  const [copiedIndex, setCopiedIndex] = useState(null);
+
+  const handleCopyDebugDetails = (layerIndex) => {
+    const layer = loadedLayers[layerIndex];
+    const debugData = {
+      layer_name: layer.layerName,
+      phase: layer.phase,
+      config_side: layer.configSide,
+      debug_details: layer.debug_details
+    };
+    navigator.clipboard.writeText(JSON.stringify(debugData, null, 2));
+    setCopiedIndex(layerIndex);
+    setTimeout(() => setCopiedIndex(null), 2000);
+  };
+
   if (loadedLayers.length === 0) {
     return (
       <div style={{ width: '100%', padding: '1rem' }}>
@@ -437,6 +440,93 @@ export default function LayerMetricsDisplay({ loadedLayers }) {
           isSingleLayer={isSingleLayer}
         />
       </div>
+
+      {/* Debug details section */}
+      {loadedLayers.some(l => l.debug_details) && (
+        <details className="mt-4" style={{ paddingLeft: '1.4rem', paddingRight: '1.4rem' }}>
+          <summary className="text-xs cursor-pointer" style={{ color: '#6B7280' }}>
+            Debug details
+          </summary>
+          <div className="mt-2 p-3 rounded" style={{ backgroundColor: '#1F2937' }}>
+            {loadedLayers.map((layer, idx) => {
+              const debugDetails = layer.debug_details;
+              if (!debugDetails) return null;
+
+              // Extract prompt and formulas for display purposes only
+              const { prompt, formulas, ...restDetails } = debugDetails;
+              const isCopied = copiedIndex === idx;
+
+              return (
+                <div key={idx} className={idx > 0 ? 'mt-4 pt-4' : ''} style={{ 
+                  borderTop: idx > 0 ? '1px solid #374151' : 'none',
+                  position: 'relative',
+                  paddingRight: '5rem'
+                }}>
+                  <button
+                    onClick={() => handleCopyDebugDetails(idx)}
+                    style={{
+                      position: 'absolute',
+                      top: idx > 0 ? '1.75rem' : '0.75rem',
+                      right: '0',
+                      padding: '0.5rem',
+                      backgroundColor: isCopied ? '#10B981' : '#374151',
+                      borderRadius: '0.375rem',
+                      border: 'none',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!isCopied) e.currentTarget.style.backgroundColor = '#4B5563';
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!isCopied) e.currentTarget.style.backgroundColor = '#374151';
+                    }}
+                  >
+                    {isCopied ? (
+                      <Check size={16} style={{ color: '#FFFFFF' }} />
+                    ) : (
+                      <Copy size={16} style={{ color: '#9CA3AF' }} />
+                    )}
+                    <span style={{ fontSize: '0.75rem', color: isCopied ? '#FFFFFF' : '#9CA3AF' }}>
+                      {isCopied ? 'Copied!' : 'Copy'}
+                    </span>
+                  </button>
+
+                  <span className="text-xs font-semibold" style={{ 
+                    color: layer.selectionColor || '#10B981' 
+                  }}>
+                    {layer.layerName} ({layer.phase})
+                  </span>
+
+                  {/* System Prompt at the top in plain text */}
+                  {prompt && (
+                    <div className="mt-2 mb-3 p-2 rounded" style={{ 
+                      backgroundColor: '#111827',
+                      borderLeft: '3px solid ' + (layer.selectionColor || '#10B981')
+                    }}>
+                      <p className="text-xs" style={{ 
+                        color: '#D1D5DB',
+                        lineHeight: '1.5',
+                        whiteSpace: 'pre-wrap'
+                      }}>
+                        {prompt}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Debug details JSON (excluding formulas for display) */}
+                  <pre className="text-xs mt-1 overflow-auto max-h-64" style={{ color: '#D1D5DB' }}>
+                    {JSON.stringify(restDetails, null, 2)}
+                  </pre>
+                </div>
+              );
+            })}
+          </div>
+        </details>
+      )}
     </div>
   );
 }

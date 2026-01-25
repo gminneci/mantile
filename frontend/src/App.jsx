@@ -5,8 +5,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 import LayerConfigCard from './components/LayerConfigCard';
 import MetricsDisplay from './components/MetricsDisplay';
 import LayerMetricsDisplay from './components/LayerMetricsDisplay';
+import { formatNumber } from './utils/formatters';
+import { CHART_COLORS } from './utils/constants';
 
 // --- API Client ---
+// Backend API URL - configured via VITE_API_URL environment variable
+// Falls back to localhost:8000 for development convenience
+// Set VITE_API_URL in production deployment (e.g., https://api.your-domain.com)
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 // Helper: Get next/previous power of 2
@@ -26,29 +31,24 @@ const prevPowerOf2 = (n) => {
   return Math.pow(2, Math.floor(log2n) - (isExactPowerOf2 ? 1 : 0));
 };
 
-// Helper: Format numbers with commas and 2 decimal places for floats
-const formatNumber = (num, decimals = 2) => {
-  if (num === null || num === undefined || isNaN(num)) return 'N/A';
-  const isFloat = !Number.isInteger(num);
-  const formatted = isFloat ? num.toFixed(decimals) : num.toString();
-  // Add comma separators
-  return formatted.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-};
-
 export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   
+  // Available models and hardware (fetched from API)
+  const [availableModels, setAvailableModels] = useState([]);
+  const [availableHardware, setAvailableHardware] = useState([]);
+  
   // STATE STRUCTURE: model (system), prefill/decode (phase), layerConfigs (per-type)
   const [config, setConfig] = useState({
-    model: 'meta-llama_Llama-3.3-70B-Instruct', // System level: model ID only
+    model: '', // System level: model ID only
     prefill: {
-      hardware: 'nvidia_nvl72_rack',
+      hardware: '',
       batchSize: 128,
       seqLen: 1024
     },
     decode: {
-      hardware: 'nvidia_nvl72_rack',
+      hardware: '',
       batchSize: 128,
       seqLen: 1024
     },
@@ -61,10 +61,10 @@ export default function App() {
   // Metrics State (response from backend)
   const [metrics, setMetrics] = useState(null);
   
-  // Available dtypes per hardware
-  const [availableDtypes, setAvailableDtypes] = useState(['bf16', 'fp16', 'int8']);
-  const [availableDtypesPrefill, setAvailableDtypesPrefill] = useState(['bf16', 'fp16', 'int8']);
-  const [availableDtypesDecode, setAvailableDtypesDecode] = useState(['bf16', 'fp16', 'int8']);
+  // Available dtypes per hardware (populated from hardware config)
+  const [availableDtypes, setAvailableDtypes] = useState([]);
+  const [availableDtypesPrefill, setAvailableDtypesPrefill] = useState([]);
+  const [availableDtypesDecode, setAvailableDtypesDecode] = useState([]);
   
   // Hardware configs for max parallelism calculation
   const [hardwareConfigs, setHardwareConfigs] = useState({});
@@ -94,6 +94,37 @@ export default function App() {
   const [viewMode, setViewMode] = useState('system'); // 'system' or 'layer'
   const [selectionError, setSelectionError] = useState(null);
   
+  // Fetch available models and hardware on mount
+  useEffect(() => {
+    const fetchOptions = async () => {
+      try {
+        const [modelsRes, hardwareRes] = await Promise.all([
+          axios.get(`${API_URL}/models`),
+          axios.get(`${API_URL}/hardware`)
+        ]);
+        setAvailableModels(modelsRes.data);
+        setAvailableHardware(hardwareRes.data);
+        
+        // Set default selections if available
+        if (modelsRes.data.length > 0 && !config.model) {
+          const defaultModel = modelsRes.data.find(m => m.id === 'openai_GPT-OSS-120B') || modelsRes.data[0];
+          setConfig(prev => ({ ...prev, model: defaultModel.id }));
+        }
+        if (hardwareRes.data.length > 0 && !config.prefill.hardware) {
+          const defaultHw = hardwareRes.data.find(h => h.id === 'nvidia_nvl72_rack') || hardwareRes.data[0];
+          setConfig(prev => ({
+            ...prev,
+            prefill: { ...prev.prefill, hardware: defaultHw.id },
+            decode: { ...prev.decode, hardware: defaultHw.id }
+          }));
+        }
+      } catch (err) {
+        console.error('Failed to fetch models/hardware:', err);
+      }
+    };
+    fetchOptions();
+  }, []);
+  
   // Helper: derive dtype list from hardware capabilities
   const deriveDtypes = (hw) => {
     const dtypes = [];
@@ -103,7 +134,7 @@ export default function App() {
     if (hw?.compute_per_package_PFlops?.nvfp8) dtypes.push('nvfp8');
     if (hw?.compute_per_package_PFlops?.nvfp4) dtypes.push('nvfp4');
     if (hw?.compute_per_package_PFlops?.int8) dtypes.push('int8');
-    return dtypes.length ? dtypes : ['bf16', 'fp16', 'int8'];
+    return dtypes;
   };
 
   // Helper: Build API request from current config state
@@ -127,13 +158,21 @@ export default function App() {
         };
       });
       
-      return {
+      const req = {
         model_id: config.model,
         hardware_id: phaseConfig.hardware,
         batch_size: Number(phaseConfig.batchSize),
         seq_len: Number(phaseConfig.seqLen),
-        layers: layersDict
+        layers: layersDict,
+        debug: true  // Enable debug details for AI validation
       };
+      
+      // For decode phase, add context_len (sum of prefill + decode sequence lengths)
+      if (phase === 'decode') {
+        req.context_len = Number(config.prefill.seqLen) + Number(config.decode.seqLen);
+      }
+      
+      return req;
     };
 
     return {
@@ -181,13 +220,21 @@ export default function App() {
         };
       });
 
-      return {
+      const req = {
         model_id: comparisonConfig.model,
         hardware_id: phaseConfig.hardware,
         batch_size: Number(phaseConfig.batchSize),
         seq_len: Number(phaseConfig.seqLen),
-        layers: layersDict
+        layers: layersDict,
+        debug: true  // Enable debug details for AI validation
       };
+      
+      // For decode phase, add context_len (sum of prefill + decode sequence lengths)
+      if (phase === 'decode') {
+        req.context_len = Number(comparisonConfig.prefill.seqLen) + Number(comparisonConfig.decode.seqLen);
+      }
+      
+      return req;
     };
 
     return {
@@ -291,12 +338,13 @@ export default function App() {
         const commonDtypes = deriveDtypes(resPrefill.data).filter(dt => 
           deriveDtypes(resDecode.data).includes(dt)
         );
-        setAvailableDtypes(commonDtypes.length ? commonDtypes : ['bf16', 'fp16', 'int8']);
+        setAvailableDtypes(commonDtypes);
       } catch (e) {
         console.error('Failed to load hardware dtypes:', e);
-        setAvailableDtypes(['bf16', 'fp16', 'int8']);
-        setAvailableDtypesPrefill(['bf16', 'fp16', 'int8']);
-        setAvailableDtypesDecode(['bf16', 'fp16', 'int8']);
+        setError('Invalid hardware configuration: ' + e.message);
+        setAvailableDtypes([]);
+        setAvailableDtypesPrefill([]);
+        setAvailableDtypesDecode([]);
       }
     };
     loadHardwareDtypes();
@@ -369,6 +417,8 @@ export default function App() {
   useEffect(() => {
     if (config.model && config.model !== '') {
       loadLayers();
+      // Clear selected layers since layer names may have changed
+      setSelectedLayers([]);
     }
   }, [config.model]);
 
@@ -470,11 +520,17 @@ export default function App() {
                 context_parallel: layerConfig[layer.phase].cp_degree,
                 sequence_parallel: layerConfig[layer.phase].sp_degree,
                 dtype: layerConfig.dtype
-              }
+              },
+              context_len: layer.phase === 'DECODE' ? (Number(currentConfig.prefill.seqLen) + Number(phaseConfig.seqLen)) : undefined,
+              debug: true  // Enable debug details for AI validation
             };
             
             const response = await axios.post(`${API_URL}/config/layer-metrics`, requestPayload);
-            return { ...layer, metrics: response.data };
+            return { 
+              ...layer, 
+              metrics: response.data.metrics,  // Extract the nested metrics object
+              debug_details: response.data.debug_details  // Store debug details separately
+            };
           } catch (err) {
             console.error('Failed to refresh layer metrics:', err);
             return layer; // Keep existing metrics on error
@@ -503,34 +559,6 @@ export default function App() {
     JSON.stringify(comparisonConfig.layerConfigs)
   ]);
 
-  // Helper: Copy prefill config to decode (phase level only)
-  const copyPrefillToDecodePhase = () => {
-    setConfig(prev => ({
-      ...prev,
-      decode: {
-        hardware: prev.prefill.hardware,
-        batchSize: prev.prefill.batchSize,
-        seqLen: prev.prefill.seqLen
-      }
-    }));
-  };
-
-  // Helper: Copy all layer configs from prefill to decode
-  const copyPrefillToDecodeLayers = () => {
-    setConfig(prev => ({
-      ...prev,
-      layerConfigs: Object.fromEntries(
-        Object.entries(prev.layerConfigs).map(([type, cfg]) => [
-          type,
-          {
-            ...cfg,
-            decode: { ...cfg.prefill } // Copy prefill parallelism to decode
-          }
-        ])
-      )
-    }));
-  };
-
   // Handler: Layer config change (layerType, phase, field, value)
   const handleLayerConfigChange = (layerType, phase, field, value) => {
     setConfig(prev => ({
@@ -555,7 +583,10 @@ export default function App() {
   // Calculate max parallelism based on hardware config
   const getMaxParallelism = (hardwareId) => {
     const hw = hardwareConfigs[hardwareId];
-    if (!hw) return 8; // Default fallback
+    if (!hw) {
+      // Hardware config not yet loaded, return 1 as safe default
+      return 1;
+    }
     const packagesPerDomain = hw.packages_per_domain || 1;
     const domainsPerCluster = hw.domains_per_cluster || 1;
     return packagesPerDomain * domainsPerCluster;
@@ -564,7 +595,10 @@ export default function App() {
   // Get available dtypes for a specific hardware
   const getAvailableDtypes = (hardwareId) => {
     const hw = hardwareConfigs[hardwareId];
-    if (!hw) return ['bf16', 'fp16', 'int8']; // Default fallback
+    if (!hw) {
+      // Hardware config not yet loaded, return empty array as safe default
+      return [];
+    }
     return deriveDtypes(hw);
   };
 
@@ -614,17 +648,13 @@ export default function App() {
           context_parallel: layerConfig[phase].cp_degree,
           sequence_parallel: layerConfig[phase].sp_degree,
           dtype: layerConfig.dtype
-        }
+        },
+        context_len: phase === 'DECODE' ? (Number(currentConfig.prefill.seqLen) + Number(phaseConfig.seqLen)) : undefined,
+        debug: true  // Enable debug details for AI validation
       };
       
       // Call backend to get layer metrics
       const response = await axios.post(`${API_URL}/config/layer-metrics`, requestPayload);
-      
-      // Colors matching LayerMetricsDisplay bar colors
-      const primaryLight = '#14B8A6';
-      const primaryDark = '#0A7566';   // Darker teal for better contrast
-      const comparisonLight = '#f96c56';
-      const comparisonDark = '#c43c2a'; // Darker orange for better contrast
       
       // Check if there's already a selection from the same side
       const existingSameSide = selectedLayers.find(l => l.configSide === configSide);
@@ -632,9 +662,9 @@ export default function App() {
       // If this is the second selection from the same side, use the dark shade
       let selectionColor;
       if (configSide === 'primary') {
-        selectionColor = existingSameSide ? primaryDark : primaryLight;
+        selectionColor = existingSameSide ? CHART_COLORS.primaryDark : CHART_COLORS.primary;
       } else {
-        selectionColor = existingSameSide ? comparisonDark : comparisonLight;
+        selectionColor = existingSameSide ? CHART_COLORS.comparisonDark : CHART_COLORS.comparison;
       }
       
       // Add to selected layers
@@ -642,7 +672,8 @@ export default function App() {
         layerName: layer.name,
         phase,
         configSide,  // Which config panel it came from
-        metrics: response.data,
+        metrics: response.data.metrics,  // Extract the nested metrics object
+        debug_details: response.data.debug_details,  // Store debug details separately
         selectionColor
       }]);
       
@@ -733,10 +764,9 @@ export default function App() {
               className="input-field"
             >
               <option value="">Select a model...</option>
-              <option value="TinyLlama_TinyLlama-1.1B-Chat-v1.0">TinyLlama 1.1B Chat</option>
-              <option value="mistralai_Mistral-7B-v0.1">Mistral 7B v0.1</option>
-              <option value="meta-llama_Llama-3.3-70B-Instruct">Llama 3.3 70B Instruct</option>
-              <option value="meta-llama_Llama-3.1-405B-Instruct">Llama 3.1 405B Instruct</option>
+              {availableModels.map(model => (
+                <option key={model.id} value={model.id}>{model.name}</option>
+              ))}
             </select>
           </div>
 
@@ -768,9 +798,9 @@ export default function App() {
                   className="input-field"
                 >
                   <option value="">Select hardware...</option>
-                  <option value="nvidia_gb200_single">NVIDIA GB200 (Single)</option>
-                  <option value="nvidia_nvl72_rack">NVIDIA NVL-72 (Full Rack)</option>
-                  <option value="nvidia_h100_80gb">NVIDIA H100 80GB</option>
+                  {availableHardware.map(hw => (
+                    <option key={hw.id} value={hw.id}>{hw.name}</option>
+                  ))}
                 </select>
               </div>
 
@@ -974,9 +1004,9 @@ export default function App() {
                     className="input-field"
                   >
                     <option value="">Select hardware...</option>
-                    <option value="nvidia_gb200_single">NVIDIA GB200 (Single)</option>
-                    <option value="nvidia_nvl72_rack">NVIDIA NVL-72 (Full Rack)</option>
-                    <option value="nvidia_h100_80gb">NVIDIA H100 80GB</option>
+                    {availableHardware.map(hw => (
+                      <option key={hw.id} value={hw.id}>{hw.name}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -1219,10 +1249,9 @@ export default function App() {
                 className="input-field"
               >
                 <option value="">Select a model...</option>
-                <option value="TinyLlama_TinyLlama-1.1B-Chat-v1.0">TinyLlama 1.1B Chat</option>
-                <option value="mistralai_Mistral-7B-v0.1">Mistral 7B v0.1</option>
-                <option value="meta-llama_Llama-3.3-70B-Instruct">Llama 3.3 70B Instruct</option>
-                <option value="meta-llama_Llama-3.1-405B-Instruct">Llama 3.1 405B Instruct</option>
+                {availableModels.map(model => (
+                  <option key={model.id} value={model.id}>{model.name}</option>
+                ))}
               </select>
             </div>
 
@@ -1254,9 +1283,9 @@ export default function App() {
                         className="input-field"
                       >
                         <option value="">Select hardware...</option>
-                        <option value="nvidia_gb200_single">NVIDIA GB200 (Single)</option>
-                        <option value="nvidia_nvl72_rack">NVIDIA NVL-72 (Full Rack)</option>
-                        <option value="nvidia_h100_80gb">NVIDIA H100 80GB</option>
+                        {availableHardware.map(hw => (
+                          <option key={hw.id} value={hw.id}>{hw.name}</option>
+                        ))}
                       </select>
                     </div>
 
@@ -1482,9 +1511,9 @@ export default function App() {
                         className="input-field"
                       >
                         <option value="">Select hardware...</option>
-                        <option value="nvidia_gb200_single">NVIDIA GB200 (Single)</option>
-                        <option value="nvidia_nvl72_rack">NVIDIA NVL-72 (Full Rack)</option>
-                        <option value="nvidia_h100_80gb">NVIDIA H100 80GB</option>
+                        {availableHardware.map(hw => (
+                          <option key={hw.id} value={hw.id}>{hw.name}</option>
+                        ))}
                       </select>
                     </div>
 

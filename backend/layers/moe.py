@@ -44,6 +44,7 @@ class MoELayer(Layer):
     """
     
     SUPPORTED_PARALLELISM = {"expert_parallel", "tensor_parallel", "context_parallel"}
+    default_kernel_count = 5  # Router (1) + scatter/gather (2) + FFN operations (2)
     
     def __init__(
         self,
@@ -52,10 +53,10 @@ class MoELayer(Layer):
         intermediate_size: int,
         num_experts: int,
         top_k: int,
+        dtype: DataType | str,
         num_shared_experts: int = 0,
         num_projections: int = 2,
         has_bias: bool = False,
-        dtype: DataType | str = "bf16",
         parallelism: Optional[dict] = None
     ):
         """
@@ -192,7 +193,7 @@ class MoELayer(Layer):
     
     def compute_weight_memory(self) -> int:
         """
-        Compute weight memory per chip in bytes.
+        Compute weight memory per chip in bytes (total stored).
         
         Router: replicated on all chips
         Routed experts: sharded by EP, each expert TP-sharded
@@ -215,6 +216,89 @@ class MoELayer(Layer):
         shared_bytes_per_chip = shared_bytes_total // tp
         
         return int(router_bytes + expert_bytes_per_chip + shared_bytes_per_chip)
+    
+    def _expected_unique_experts(self, batch_size: int, seq_len: int) -> float:
+        """
+        Expected number of unique experts activated across a batch.
+        
+        Uses coupon-collector distribution: each token independently selects
+        top_k experts. The probability that a specific expert is NOT selected
+        by any token in the batch:
+            P(not selected) = (1 - top_k/num_experts)^num_tokens
+        
+        Expected unique experts = num_experts × (1 - P(not selected))
+        
+        Args:
+            batch_size: Number of sequences
+            seq_len: Tokens per sequence (1 for decode, full length for prefill)
+            
+        Returns:
+            Expected number of unique experts activated
+        """
+        num_tokens = batch_size * seq_len
+        p_not_selected = (1 - self.top_k / self.num_experts) ** num_tokens
+        return self.num_experts * (1 - p_not_selected)
+    
+    def compute_weight_memory_read(self, batch_size: int, seq_len: int, phase: Phase) -> int:
+        """
+        Compute weight memory actually READ during a forward pass.
+        
+        For MoE, only active experts are read. With batching, unique experts
+        activated follows a coupon-collector distribution. Small batches read
+        few experts; large batches approach reading all experts.
+        
+        Behavior for 128 experts, top_k=4:
+            Batch=1:   ~4 experts (3.1%)
+            Batch=4:   ~15 experts (12%)
+            Batch=64:  ~108 experts (84%)
+            Batch=128: ~126 experts (98%)
+        
+        Args:
+            batch_size: Number of sequences
+            seq_len: Tokens per sequence
+            phase: PREFILL or DECODE
+            
+        Returns:
+            Memory in bytes actually read from HBM
+        """
+        ep = self.parallelism.get("expert_parallel", 1)
+        tp = self.parallelism.get("tensor_parallel", 1)
+        bytes_per_elem = self.dtype.bytes_per_element
+        
+        # Router is always fully read
+        router_bytes = self.router_params * bytes_per_elem
+        
+        # Shared experts are always fully read (TP sharded)
+        shared_bytes_total = self.shared_expert_params * bytes_per_elem
+        shared_bytes_read = shared_bytes_total // tp
+        
+        # Routed experts: probabilistic based on batch
+        # For decode, seq_len=1 (one token per sequence)
+        # For prefill, seq_len=full prompt length
+        tokens_this_step = batch_size * seq_len
+        
+        # Expected unique experts activated globally
+        unique_global = self._expected_unique_experts(batch_size, seq_len)
+        
+        # Experts per chip (EP sharding)
+        experts_per_chip = self.num_experts // ep
+        
+        # Approximate unique experts on this chip (proportional to EP)
+        unique_on_chip = unique_global / ep
+        
+        # Clamp to valid range [top_k/ep, experts_per_chip]
+        unique_on_chip = min(max(unique_on_chip, self.top_k / ep), experts_per_chip)
+        
+        # Bytes per expert (TP sharded)
+        params_per_expert = self.num_projections * self.hidden_size * self.intermediate_size
+        if self.has_bias:
+            params_per_expert += self.num_projections * self.intermediate_size
+        bytes_per_expert = params_per_expert * bytes_per_elem // tp
+        
+        # Total routed expert bytes read
+        routed_bytes_read = unique_on_chip * bytes_per_expert
+        
+        return int(router_bytes + shared_bytes_read + routed_bytes_read)
     
     def compute_activation_memory(self, batch_size: int, seq_len: int, phase: Phase) -> int:
         """
@@ -297,7 +381,7 @@ class MoELayer(Layer):
         seq_len: int,
         phase: Phase,
         hardware: dict
-    ) -> Optional[int]:
+    ) -> int:
         """
         Compute communication bytes per chip for MoE.
 

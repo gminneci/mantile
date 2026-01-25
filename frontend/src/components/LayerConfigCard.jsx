@@ -12,8 +12,8 @@ export default function LayerConfigCard({
   onConfigChange,
   phase = 'prefill', // 'prefill' or 'decode'
   accentColor = '#29AF83', // Default teal, can be overridden with orange
-  maxParallelism = 8, // Maximum parallelism degree based on hardware
-  availableDtypes = ['bf16', 'fp16', 'int8'], // Available dtypes from hardware config
+  maxParallelism, // Maximum parallelism degree based on hardware (required)
+  availableDtypes = [], // Available dtypes from hardware config (populated dynamically)
   // Click selection props
   isSelectable = false,
   isSelected = false,
@@ -24,6 +24,17 @@ export default function LayerConfigCard({
   const availableStrategies = layer.available_parallelism || [];
   const phaseConfig = config?.[phase] || { tp_degree: 1, cp_degree: 1, sp_degree: 1 };
   
+  // Auto-select best dtype if not set - prefer fp8 variants, then bf16, then fp16, then int8
+  const selectBestDtype = () => {
+    if (availableDtypes.length === 0) return null;
+    // Priority order: nvfp4 > nvfp8 > fp8 > bf16 > fp16 > int8
+    const priority = ['nvfp4', 'nvfp8', 'fp8', 'bf16', 'fp16', 'int8'];
+    for (const dtype of priority) {
+      if (availableDtypes.includes(dtype)) return dtype;
+    }
+    return availableDtypes[0]; // Fallback to first available
+  };
+  
   // Calculate dynamic max for each slider based on hybrid parallelism constraint
   // Product of TP × CP × SP cannot exceed maxParallelism
   const getDynamicMax = (strategyKey) => {
@@ -33,7 +44,9 @@ export default function LayerConfigCard({
     const product = tp * cp * sp;
     return Math.floor(maxParallelism / product);
   };
-  const dtype = config?.dtype || '';
+  
+  // Get dtype - use configured dtype or auto-select best available
+  const dtype = config?.dtype || selectBestDtype();
 
   const strategyMapping = {
     'tensor_parallel': { key: 'tp_degree', label: 'Tensor Parallel' },

@@ -32,13 +32,14 @@ class NormLayer(Layer):
     
     # Norm layers accept any parallelism but are replicated (not sharded)
     SUPPORTED_PARALLELISM = {"tensor_parallel", "pipeline_parallel", "expert_parallel"}
+    default_kernel_count = 0  # Usually fused with adjacent operations
     
     def __init__(
         self,
         layer_idx: int,
         hidden_size: int,
+        dtype: DataType | str,
         has_bias: bool = False,
-        dtype: DataType | str = "bf16",
         parallelism: Optional[dict] = None
     ):
         """
@@ -62,7 +63,7 @@ class NormLayer(Layer):
         Approximate LN/RMSNorm flops per chip: ~5 ops per element (mean/var, scale, bias).
         """
         B, S, H = batch_size, seq_len, self.hidden_size
-        return int(5 * B * S * H)
+        return int(5 * B * S * H) # std assumption for both LayerNorm and RMSNorm
     
     def compute_weight_memory(self) -> int:
         return int(self.param_count * self.dtype.bytes_per_element)

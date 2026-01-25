@@ -21,13 +21,16 @@ Each JSON file defines a model configuration with the following fields:
       "name": "attention",
       "class": "GroupedQueryAttentionLayer",  // or "AttentionLayer" for MHA
       "count": 80,
+      "supported": true,  // Optional: whether layer is supported by the system
       "specs": {
         "layer_idx": 0,
         "hidden_size": 8192,
         "num_heads": 64,
         "num_kv_heads": 8,  // For GQA; omit for MHA
         "head_dim": 128,
-        "parameter_count": 150994944  // Optional metadata
+        "parameter_count": 150994944,  // Optional metadata
+        "input_dim": 8192,              // Optional metadata (not used in computation)
+        "output_dim": 8192              // Optional metadata (not used in computation)
       }
     },
     {
@@ -64,7 +67,10 @@ Each JSON file defines a model configuration with the following fields:
     }
   ],
   "validated": true,
-  "validation_notes": "Optional human-readable notes about validation"
+  "validation_notes": "Optional human-readable notes about validation",
+  "validation_sources": [  // Optional: URLs to source documentation
+    "https://huggingface.co/model-org/model-name"
+  ]
 }
 ```
 
@@ -78,7 +84,14 @@ Available layer implementations (from `backend/layers/`):
 
 - **GroupedQueryAttentionLayer**: Grouped query attention (GQA)
   - Required specs: `hidden_size`, `num_heads`, `num_kv_heads`, `head_dim`
+  - Optional specs: `has_bias` (default: false)
   - Supported parallelism: `tensor_parallel`, `context_parallel`
+
+- **SlidingWindowAttentionLayer**: Grouped query attention with sliding window
+  - Required specs: `hidden_size`, `num_query_heads`, `num_kv_heads`, `head_dim`, `sliding_window`
+  - Optional specs: `num_sinks` (preserved initial tokens), `has_bias` (default: false)
+  - Supported parallelism: `tensor_parallel`, `context_parallel`
+  - Used by: Mistral, GPT-OSS-120B
 
 - **MLPLayer**: Standard 2-projection MLP
   - Required specs: `hidden_size`, `intermediate_size`
@@ -88,6 +101,12 @@ Available layer implementations (from `backend/layers/`):
   - Required specs: `hidden_size`, `intermediate_size`
   - Supported parallelism: `tensor_parallel`, `sequence_parallel`
 
+- **MoELayer**: Mixture of Experts layer
+  - Required specs: `hidden_size`, `intermediate_size`, `num_experts`, `top_k`
+  - Optional specs: `num_projections` (2 or 3, default: 3 for gated), `has_bias` (default: false)
+  - Supported parallelism: `tensor_parallel`, `expert_parallel`
+  - Note: Each expert is a gated MLP (3 projections) or standard MLP (2 projections)
+
 - **NormLayer**: LayerNorm or RMSNorm
   - Required specs: `hidden_size`, `has_bias`
   - Typically replicated (no parallelism)
@@ -96,23 +115,6 @@ Available layer implementations (from `backend/layers/`):
   - Required specs: `vocab_size`, `hidden_size`
   - Optional parallelism: `tensor_parallel` (for large vocabs)
 
-## Available Configurations
-
-- **meta-llama_Llama-3.1-405B-Instruct.json**: Meta Llama 3.1 405B Instruct
-  - 126 layers, GQA (8 KV heads), SwiGLU MLP (53248 intermediate)
-  - 405.9B parameters
-
-- **meta-llama_Llama-3.3-70B-Instruct.json**: Meta Llama 3.3 70B Instruct
-  - 80 layers, GQA (8 KV heads), SwiGLU MLP (28672 intermediate)
-  - 69.5B parameters
-
-- **TinyLlama_TinyLlama-1.1B-Chat-v1.0.json**: TinyLlama 1.1B Chat
-  - 22 layers, GQA (4 KV heads), SwiGLU MLP (5632 intermediate)
-  - 1.1B parameters
-
-- **mistralai_Mistral-7B-v0.1.json**: Mistral 7B v0.1
-  - 32 layers, GQA (8 KV heads), SwiGLU MLP (14336 intermediate)
-  - 7.2B parameters, sliding window attention (4096)
 
 ## Usage
 
@@ -157,3 +159,6 @@ The backend validates:
 Optional validation:
 - Parameter count matches expected values
 - Architecture matches published model cards
+
+## TODO
+Add a method to validate the integrity of the config files

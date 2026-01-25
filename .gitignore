@@ -38,6 +38,9 @@ Thumbs.db
 htmlcov/
 .coverage
 
+# Logs
+*.log
+
 # Node (for frontend)
 node_modules/
 frontend/dist/

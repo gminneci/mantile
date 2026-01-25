@@ -38,7 +38,9 @@ class PhaseMetricsRequest(BaseModel):
     model_id: str
     hardware_id: str
     batch_size: int
-    seq_len: int
+    seq_len: int  # Sequence length being processed (full prompt for prefill, 1 for decode)
+    context_len: Optional[int] = None  # Total context in KV cache (for decode phase)
+    debug: bool = False  # If True, include debug_details in layer metrics
     # Layer configurations with parallelism and dtype
     layers: Dict[str, Dict[str, Any]] = {}
 
@@ -75,6 +77,21 @@ def _resolve_layer_class(name: str):
     return getattr(layers_pkg, name, None)
 
 
+@app.get("/models")
+def list_models() -> List[Dict[str, Any]]:
+    """List all available model configurations."""
+    models = []
+    for config_file in MODELS_CFG_DIR.glob("*.json"):
+        model_id = config_file.stem
+        with open(config_file, 'r') as f:
+            cfg = json.load(f)
+        models.append({
+            "id": model_id,
+            "name": cfg.get("name", model_id.replace("_", " ").replace("-", " ")),
+            "total_params": cfg.get("total_params", 0)
+        })
+    return sorted(models, key=lambda x: x["total_params"])
+
 @app.get("/models/{model_id}")
 def load_model_config(model_id: str) -> dict:
     """Load raw model config JSON as dict."""
@@ -95,6 +112,20 @@ def load_model_config(model_id: str) -> dict:
         raise ValueError(f"Duplicate layer names found in model config: {set(duplicates)}")
 
     return cfg
+
+@app.get("/hardware")
+def list_hardware() -> List[Dict[str, str]]:
+    """List all available hardware configurations."""
+    hardware_list = []
+    for config_file in HARDWARE_CONFIGS_DIR.glob("*.json"):
+        config_id = config_file.stem
+        with open(config_file, 'r') as f:
+            cfg = json.load(f)
+        hardware_list.append({
+            "id": config_id,
+            "name": cfg.get("name", config_id.replace("_", " ").replace("-", " "))
+        })
+    return sorted(hardware_list, key=lambda x: x["name"])
 
 @app.get("/hardware/{config_name}")
 def load_hardware_config(config_name: str) -> Dict[str, Any]:
@@ -147,9 +178,11 @@ def compute_phase_metrics(phase_req: PhaseMetricsRequest, phase: Phase) -> dict:
     total_weight_memory_gb = 0.0
     total_activation_memory_gb = 0.0
     total_kv_cache_gb = 0.0
-    compute_time_ms = 0.0
-    memory_time_ms = 0.0
+    wall_clock_time_ms = 0.0
+    total_compute_time_ms = 0.0
+    total_load_time_ms = 0.0
     max_packages = 1
+    layer_debug_details = {}  # Collect debug details from each layer if debug=True
 
     for layer_name, config in phase_req.layers.items():
         # Find layer definition in model config
@@ -168,22 +201,16 @@ def compute_phase_metrics(phase_req: PhaseMetricsRequest, phase: Phase) -> dict:
 
         num_instances = layer_type.get("count", 1)
 
-        # Prepare hardware config for base.py's compute_metrics
-        # base.py expects compute_per_package_PFlops and memory_bandwidth_gb_s
-        hbm_memory = next((m for m in hardware_cfg['memory_per_package'] if 'HBM' in m['type']), hardware_cfg['memory_per_package'][0])
-        hardware_for_layer = {
-            'compute_per_package_PFlops': hardware_cfg['compute_per_package_PFlops'],
-            'memory_bandwidth_gb_s': hbm_memory['bandwidth_gbps'],
-            'interconnect_bandwidth_gb_s': hardware_cfg.get('interconnect_bandwidth_gbps', 0),
-            'interconnect_latency_us': hardware_cfg.get('interconnect_latency_us', 0)
-        }
-
         # Compute metrics for this phase (base.py handles hardware-aware timing)
+        # Pass full hardware config - compute_metrics will extract HBM memory
+        # For decode, use context_len for KV cache size if provided
         m = layer.compute_metrics(
             batch_size=phase_req.batch_size,
             seq_len=phase_req.seq_len,
             phase=phase,
-            hardware=hardware_for_layer
+            hardware=hardware_cfg,
+            context_len=phase_req.context_len,
+            debug=phase_req.debug
         )
         
         max_packages = max(max_packages, m.num_packages)
@@ -191,19 +218,27 @@ def compute_phase_metrics(phase_req: PhaseMetricsRequest, phase: Phase) -> dict:
         total_activation_memory_gb += (m.activation_memory_per_package * num_instances) / 1e9
         total_kv_cache_gb += (m.kv_cache_per_package * num_instances) / 1e9
         
-        # Aggregate timing from layer metrics (base.py computed these)
-        if m.compute_time_ms is not None:
-            compute_time_ms += m.compute_time_ms * num_instances
-        if m.load_time_ms is not None:
-            memory_time_ms += m.load_time_ms * num_instances
+        # Aggregate wall_clock_time which includes phase-aware overlap model
+        wall_clock_time_ms += m.wall_clock_time_ms * num_instances
+        
+        # Track separate timing components for debugging
+        total_compute_time_ms += m.compute_time_ms * num_instances
+        total_load_time_ms += m.load_time_ms * num_instances
+        
+        # Collect debug details if requested
+        if phase_req.debug and m.debug_details:
+            m.debug_details['layer_params'] = layer_type["specs"]
+            layer_debug_details[layer_name] = m.debug_details
 
     return {
         "total_weight_memory_gb": total_weight_memory_gb,
         "total_activation_memory_gb": total_activation_memory_gb,
         "total_kv_cache_gb": total_kv_cache_gb,
-        "compute_time_ms": compute_time_ms,
-        "memory_time_ms": memory_time_ms,
+        "wall_clock_time_ms": wall_clock_time_ms,
         "max_packages": max_packages,
+        "total_compute_time_ms": total_compute_time_ms,
+        "total_load_time_ms": total_load_time_ms,
+        "layer_debug_details": layer_debug_details if phase_req.debug else None
     }
 
 
@@ -216,6 +251,8 @@ class LayerMetricsRequest(BaseModel):
     layer_name: str
     phase: Phase
     layer_config: Dict[str, Any]  # Contains tensor_parallel, context_parallel, sequence_parallel, dtype
+    context_len: Optional[int] = None  # Total context in KV cache (for decode phase)
+    debug: bool = False  # If True, include debug_details in response
 
 
 @app.post("/config/layer-metrics")
@@ -252,49 +289,59 @@ def compute_layer_metrics(request: LayerMetricsRequest):
     # Construct layer instance
     layer = _construct_layer(layer_class, layer_type["specs"], dtype_enum, parallelism)
     
-    # Prepare hardware config for compute_metrics
-    hbm_memory = next((m for m in hardware_cfg['memory_per_package'] if 'HBM' in m['type']), hardware_cfg['memory_per_package'][0])
-    hardware_for_layer = {
-        'compute_per_package_PFlops': hardware_cfg['compute_per_package_PFlops'],
-        'memory_bandwidth_gb_s': hbm_memory['bandwidth_gbps'],
-        'interconnect_bandwidth_gb_s': hardware_cfg.get('interconnect_bandwidth_gbps', 0),
-        'interconnect_latency_us': hardware_cfg.get('interconnect_latency_us', 0)
-    }
-    
     # Compute layer metrics (returns LayerMetrics dataclass)
+    # Pass full hardware config - compute_metrics will extract HBM memory
     metrics = layer.compute_metrics(
-        hardware=hardware_for_layer,
+        hardware=hardware_cfg,
         batch_size=request.batch_size,
         seq_len=request.seq_len,
-        phase=request.phase
+        phase=request.phase,
+        context_len=request.context_len,
+        debug=request.debug
     )
     
-    # Extract values using dataclass attributes
-    compute_time = metrics.compute_time_ms or 0
-    load_time = metrics.load_time_ms or 0
+    # Get layer constructor parameters for debugging
+    layer_config = {
+        "layer_idx": getattr(layer, 'layer_idx', None),
+        "dtype": str(layer.dtype),
+        "parallelism": layer.parallelism,
+    }
+    # Add layer-specific parameters
+    for attr in ['hidden_size', 'num_heads', 'num_kv_heads', 'head_dim', 'intermediate_size', 
+                 'num_experts', 'top_k', 'vocab_size', 'window_size', 'sliding_window',
+                 'num_projections', 'num_shared_experts']:
+        if hasattr(layer, attr):
+            layer_config[attr] = getattr(layer, attr)
     
-    # Determine bottleneck
-    if compute_time > load_time * 1.2:
-        bottleneck = "compute"
-    elif load_time > compute_time * 1.2:
-        bottleneck = "memory"
-    else:
-        bottleneck = "balanced"
-    
-    return {
+    response = {
         "layer_name": request.layer_name,
         "layer_type": layer_type["class"],
-        "flops_per_package": metrics.flops_per_package,
-        "weight_memory_per_package": metrics.weight_memory_per_package,
-        "activation_memory_per_package": metrics.activation_memory_per_package,
-        "kv_cache_per_package": metrics.kv_cache_per_package,
-        "compute_time_ms": metrics.compute_time_ms,
-        "load_time_ms": metrics.load_time_ms,
-        "communication_time_ms": metrics.communication_time_ms,
-        "wall_clock_time_ms": metrics.wall_clock_time_ms,
-        "bottleneck": bottleneck,
-        "num_packages": metrics.num_packages,
+        "layer_config": layer_config,
+        "request_params": {
+            "batch_size": request.batch_size,
+            "seq_len": request.seq_len,
+            "phase": str(request.phase),
+        },
+        "metrics": {
+            "flops_per_package": metrics.flops_per_package,
+            "weight_memory_per_package": metrics.weight_memory_per_package,
+            "activation_memory_per_package": metrics.activation_memory_per_package,
+            "kv_cache_per_package": metrics.kv_cache_per_package,
+            "compute_time_ms": metrics.compute_time_ms,
+            "load_time_ms": metrics.load_time_ms,
+            "communication_time_ms": metrics.communication_time_ms,
+            "wall_clock_time_ms": metrics.wall_clock_time_ms,
+            "bottleneck": metrics.bottleneck,
+            "num_packages": metrics.num_packages,
+        }
     }
+    
+    # Include debug details if requested
+    if request.debug and metrics.debug_details:
+        metrics.debug_details['layer_params'] = layer_type["specs"]
+        response["debug_details"] = metrics.debug_details
+    
+    return response
 
 
 @app.post("/config/system-metrics")
@@ -322,14 +369,15 @@ def compute_system_metrics(request: SystemMetricsRequest):
     # Aggregate system-level metrics
     max_packages = max(prefill_metrics["max_packages"], decode_metrics["max_packages"])
     
-    # Use prefill memory totals (weights/activations/kv are same for both phases)
+    # Use prefill memory totals for weights/activations (same for both phases)
+    # BUT use decode KV cache since that determines decode bandwidth requirements!
     total_weight_memory_gb = prefill_metrics["total_weight_memory_gb"]
     total_activation_memory_gb = prefill_metrics["total_activation_memory_gb"]
-    total_kv_cache_gb = prefill_metrics["total_kv_cache_gb"]
+    total_kv_cache_gb = decode_metrics["total_kv_cache_gb"]  # Decode KV scales with context!
 
-    # Derive latencies
-    ttft_ms = max(prefill_metrics["compute_time_ms"], prefill_metrics["memory_time_ms"])
-    tpot_ms = max(decode_metrics["compute_time_ms"], decode_metrics["memory_time_ms"])
+    # Derive latencies (overhead now applied per-layer in base.py)
+    ttft_ms = prefill_metrics["wall_clock_time_ms"]
+    tpot_ms = decode_metrics["wall_clock_time_ms"]
     
     # TPS/User is the per-user token generation rate (independent of batch size)
     tps_user = 1000.0 / tpot_ms if tpot_ms > 0 else 0.0
@@ -340,13 +388,8 @@ def compute_system_metrics(request: SystemMetricsRequest):
     
     total_latency_ms = ttft_ms + (tpot_ms * decode_req.seq_len)
 
-    # Bottleneck analysis
-    if prefill_metrics["compute_time_ms"] > prefill_metrics["memory_time_ms"] * 1.2:
-        bottleneck = "compute"
-    elif prefill_metrics["memory_time_ms"] > prefill_metrics["compute_time_ms"] * 1.2:
-        bottleneck = "memory"
-    else:
-        bottleneck = "balanced"
+    # Bottleneck analysis removed - wall_clock_time includes phase-aware overlap model
+    bottleneck = "hardware-modeled"
 
     # Memory per package and capacity check
     memory_per_package_gb = (
@@ -354,7 +397,7 @@ def compute_system_metrics(request: SystemMetricsRequest):
     ) / max_packages if max_packages > 0 else 0.0
     
     hbm_memory = next((m for m in hardware_cfg['memory_per_package'] if 'HBM' in m['type']), hardware_cfg['memory_per_package'][0])
-    hw_capacity_gb = hbm_memory['capacity_gb']
+    hw_capacity_gb = hbm_memory['capacity_GB']
     fits_on_hardware = memory_per_package_gb <= hw_capacity_gb
     
     # Power and TCO metrics (scaled by number of packages)
@@ -384,6 +427,19 @@ def compute_system_metrics(request: SystemMetricsRequest):
             "tco_sec_usd": tco_sec_usd,
             "bottleneck": bottleneck,
             "fits_on_hardware": fits_on_hardware,
+        },
+        "debug": {
+            "decode_compute_ms": decode_metrics["total_compute_time_ms"],
+            "decode_load_ms": decode_metrics["total_load_time_ms"],
+            "prefill_compute_ms": prefill_metrics["total_compute_time_ms"],
+            "prefill_load_ms": prefill_metrics["total_load_time_ms"],
+            "decode_kv_cache_gb": decode_metrics["total_kv_cache_gb"],
+            "prefill_kv_cache_gb": prefill_metrics["total_kv_cache_gb"],
+            "decode_context_len": decode_req.context_len,
+            "decode_seq_len": decode_req.seq_len,
+            "prefill_seq_len": prefill_req.seq_len,
+            "prefill_layer_details": prefill_metrics.get("layer_debug_details"),
+            "decode_layer_details": decode_metrics.get("layer_debug_details"),
         },
     }
 

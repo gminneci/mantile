@@ -9,10 +9,13 @@
     "int8": 5.0
   },
   "memory_per_package": [
-    {"type": "HBM", "capacity_gb": 192.0, "bandwidth_gbps": 8192.0}
+    {"type": "HBM", "capacity_GB": 192.0, "bandwidth_GBs": 8192.0}
   ],
-  "interconnect_bandwidth_gbps": 64800.0,
+  "interconnect_bandwidth_GBs": 64800.0,
   "interconnect_latency_us": 0.20,
+  "decode_load_overlap": true,
+  "decode_comms_overlap": false,
+  "fixed_overhead_per_kernel_us": 10.0,
   "power_kw": 120.0,
   "tco_sec_usd": 0.045,
   "packages_per_domain": 72,

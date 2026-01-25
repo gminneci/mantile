@@ -12,22 +12,75 @@ Mantile provides theoretical performance estimates based on model architecture a
 reconcile/
 ├── by_model/              # Organized by model (HuggingFace naming)
 │   └── openai_GPT-OSS-120B/
-│       ├── inferencemax.csv      # Benchmark data from InferenceMAX
-│       └── README.md              # Model-specific reconciliation notes
+│       ├── inferencemax.csv           # Source benchmark data
+│       ├── inferencemax_b200_only.csv # Filtered subset (B200 only)
+│       ├── README.md                  # Model-specific notes
+│       └── RECONCILIATION_SUMMARY.md  # Analysis & findings
 ├── sources/               # Data provider extraction tools
 │   └── inferencemax/
-│       ├── extract_inferencemax_data.py
+│       ├── extract_inferencemax_data.py  # Extract from GitHub artifacts
 │       ├── README.md
-│       └── raw/           # Downloaded artifacts
-└── utils/                 # Shared utilities (if needed)
+│       └── raw/                          # Downloaded artifacts (cached)
+└── utils/                 # Reconciliation workflow utilities
+    ├── inferencemax_to_mantile.py    # Convert benchmark configs to Mantile API requests
+    ├── run_mantile_estimates.py       # Batch estimate runner
+    └── compare_predictions.py         # Error analysis and reporting
 ```
 
 ## Workflow
 
-1. **Extract** - Run data provider scripts to download benchmark results
-2. **Standardize** - Convert to common CSV format in `by_model/<model>/`
-3. **Compare** - Run Mantile estimates for same configurations
-4. **Reconcile** - Analyze differences, calibrate model parameters
+### Complete Reconciliation Process
+
+1. **Extract** - Download benchmark data from provider
+   ```bash
+   cd reconcile/sources/inferencemax
+   python extract_inferencemax_data.py --model openai_GPT-OSS-120B --collect-recent 5
+   ```
+   
+2. **Filter** - Create model-specific filtered datasets (e.g., B200-only)
+   ```bash
+   # Manual filtering or custom scripts to create inferencemax_b200_only.csv
+   ```
+
+3. **Convert & Estimate** - Generate Mantile predictions for all benchmark configs
+   ```bash
+   cd reconcile/utils
+   python run_mantile_estimates.py --model openai_GPT-OSS-120B \
+     --input ../by_model/openai_GPT-OSS-120B/inferencemax_b200_only.csv \
+     --output ../by_model/openai_GPT-OSS-120B/mantile_predictions.csv
+   ```
+
+4. **Compare** - Analyze prediction errors and generate reports
+   ```bash
+   python compare_predictions.py --model openai_GPT-OSS-120B \
+     --actuals ../by_model/openai_GPT-OSS-120B/inferencemax_b200_only.csv \
+     --predictions ../by_model/openai_GPT-OSS-120B/mantile_predictions.csv \
+     --output ../by_model/openai_GPT-OSS-120B/comparison_report.csv
+   ```
+
+5. **Reconcile** - Document findings and calibrate model parameters
+   - Update model configs based on systematic errors
+   - Document in `by_model/<model>/RECONCILIATION_SUMMARY.md`
+
+### Utilities
+
+**`inferencemax_to_mantile.py`**
+- Converts InferenceMAX CSV rows to Mantile API request format
+- Handles hardware mapping (e.g., B200 → nvidia_nvl72_rack)
+- Maps precision formats (fp4 → nvfp4, etc.)
+- Configurable with `--model` parameter
+
+**`run_mantile_estimates.py`**
+- Batch processes benchmark configs through Mantile API
+- Incremental saving (every 10 rows) for long runs
+- Resume support to skip already-processed configs
+- Outputs predictions with timing and memory metrics
+
+**`compare_predictions.py`**
+- Calculates error metrics (MAPE, absolute error, percentage error)
+- Generates breakdown by framework, tensor parallelism, context length
+- Identifies best/worst predictions for investigation
+- Outputs detailed comparison CSV and summary statistics
 
 ## Data Sources
 

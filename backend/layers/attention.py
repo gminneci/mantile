@@ -12,10 +12,72 @@ Supported parallelism strategies:
 """
 
 from typing import Optional
+from dataclasses import replace
 from .base import Layer, Phase, DataType
 
+# Softmax statistics for context-parallel reductions (max and sum scalars per query per head)
+# Modern implementations typically use BF16/FP16 (2 bytes) for block-scaling statistics
+SOFTMAX_STATS_BYTES = 2
 
-class AttentionLayer(Layer):
+
+class _AttentionLayerBase(Layer):
+    """
+    Internal base class for attention layers with shared compute_metrics logic.
+    Provides phase-aware KV cache handling and load time recalculation.
+    
+    Subclasses must implement:
+        - _compute_kv_cache_with_phase(): Phase-aware KV cache calculation
+        - All other Layer abstract methods
+    """
+    
+    def compute_metrics(
+        self,
+        batch_size: int,
+        seq_len: int,
+        phase: Phase | str,
+        hardware: Optional[dict] = None,
+        context_len: Optional[int] = None,
+        debug: bool = False
+    ):
+        """Override to use phase-aware KV cache calculation and recalculate load time."""
+        # Convert string input to enum
+        if isinstance(phase, str):
+            phase = Phase(phase)
+        
+        # Call parent's compute_metrics
+        metrics = super().compute_metrics(batch_size, seq_len, phase, hardware, context_len, debug)
+        
+        # Replace KV cache with phase-aware version
+        # For decode: use context_len for KV cache size (past context), seq_len for processing
+        # For prefill: seq_len represents the full context being processed
+        kv_seq_len = context_len if (phase == Phase.DECODE and context_len is not None) else seq_len
+        kv_cache_per_package = self._compute_kv_cache_with_phase(batch_size, kv_seq_len, phase)
+        num_packages = self._get_num_packages()
+        
+        # Recalculate load_time with corrected KV cache if hardware provided
+        load_time_ms = metrics.load_time_ms
+        if hardware and phase == Phase.DECODE and metrics.load_time_ms is not None:
+            # Recalculate: load_time = (weights + kv_cache) / bandwidth
+            hbm_memory = next(
+                (m for m in hardware['memory_per_package'] if 'HBM' in m['type']),
+                hardware['memory_per_package'][0]
+            )
+            mem_bw_gbs = hbm_memory['bandwidth_GBs']
+            mem_bw = mem_bw_gbs * 1e9  # Convert to bytes/s
+            weight_bytes_read = self.compute_weight_memory_read(batch_size, seq_len, phase)
+            load_bytes = weight_bytes_read + kv_cache_per_package
+            load_time_ms = (load_bytes / mem_bw) * 1000  # Convert to ms
+        
+        # Create new metrics with updated KV cache and load_time
+        return replace(
+            metrics,
+            kv_cache_per_package=kv_cache_per_package,
+            kv_cache_total=kv_cache_per_package * num_packages,
+            load_time_ms=load_time_ms
+        )
+
+
+class AttentionLayer(_AttentionLayerBase):
     """
     Vanilla multi-head attention (MHA) layer.
     
@@ -30,11 +92,9 @@ class AttentionLayer(Layer):
     
     Supported parallelism:
         - tensor_parallel: Split by heads (requires num_heads % tp == 0)
-        - context_parallel: Split sequence/KV (KV-sharded attention with softmax reduction)
-        - Hybrid: Both TP and CP simultaneously
     """
-    
-    SUPPORTED_PARALLELISM = {"tensor_parallel", "context_parallel"}
+    SUPPORTED_PARALLELISM = {"tensor_parallel"}
+    default_kernel_count = 3  # Q/K/V proj, QK^T+softmax, attn@V+out_proj (modern fused)
     
     def __init__(
         self,
@@ -178,7 +238,8 @@ class AttentionLayer(Layer):
         h_per = self.num_heads // tp
         seq_local = seq_len // cp
         elements = 2 * batch_size * h_per * seq_local * self.head_dim
-        return int(elements * self.dtype.bytes_per_element)
+        kv_bytes = int(elements * self.dtype.bytes_per_element)
+        return kv_bytes
     
     def _compute_kv_cache_with_phase(self, batch_size: int, seq_len: int, phase: Phase) -> int:
         """
@@ -206,7 +267,7 @@ class AttentionLayer(Layer):
         seq_len: int,
         phase: Phase,
         hardware: dict
-    ) -> Optional[int]:
+    ) -> int:
         """
         Compute communication requirements for TP and/or CP.
         
@@ -236,8 +297,7 @@ class AttentionLayer(Layer):
             h_per = self.num_heads // tp  # Heads per chip
             
             # (a) Softmax stats: 2 FP32 scalars (max + sum) per query per head
-            softmax_stat_bytes = 4  # FP32
-            stats_comm = num_queries * h_per * 2 * softmax_stat_bytes
+            stats_comm = num_queries * h_per * 2 * SOFTMAX_STATS_BYTES
             
             # (b) Output vector reduction: sum partial outputs
             # Shape: [num_queries, d/tp] if TP, else [num_queries, d]
@@ -247,37 +307,11 @@ class AttentionLayer(Layer):
             cp_comm = stats_comm + output_comm
             total_comm += cp_comm
         
-        return int(total_comm) if total_comm > 0 else None
+        return int(total_comm)
     
-    def compute_metrics(
-        self,
-        batch_size: int,
-        seq_len: int,
-        phase: Phase | str,
-        hardware: Optional[dict] = None
-    ):
-        """Override to use phase-aware KV cache calculation"""
-        # Convert string input to enum
-        if isinstance(phase, str):
-            phase = Phase(phase)
-        
-        # Call parent's compute_metrics
-        metrics = super().compute_metrics(batch_size, seq_len, phase, hardware)
-        
-        # Replace KV cache with phase-aware version
-        kv_cache_per_package = self._compute_kv_cache_with_phase(batch_size, seq_len, phase)
-        num_packages = self._get_num_packages()
-        
-        # Create new metrics with updated KV cache
-        from dataclasses import replace
-        return replace(
-            metrics,
-            kv_cache_per_package=kv_cache_per_package,
-            kv_cache_total=kv_cache_per_package * num_packages
-        )
 
 
-class GroupedQueryAttentionLayer(Layer):
+class GroupedQueryAttentionLayer(_AttentionLayerBase):
     """
     Grouped Query Attention (GQA) with shared KV heads (e.g., LLaMA 2/3).
     
@@ -300,6 +334,7 @@ class GroupedQueryAttentionLayer(Layer):
     """
     
     SUPPORTED_PARALLELISM = {"tensor_parallel", "context_parallel"}
+    default_kernel_count = 4  # Q/K/V proj, QK^T+softmax, attn@V+out_proj (GQA needs extra for KV expansion)
     
     def __init__(
         self,
@@ -488,7 +523,7 @@ class GroupedQueryAttentionLayer(Layer):
         seq_len: int,
         phase: Phase,
         hardware: dict
-    ) -> Optional[int]:
+    ) -> int:
         """Communication for both TP and CP in GQA"""
         tp = self.parallelism.get("tensor_parallel", 1)
         cp = self.parallelism.get("context_parallel", 1)
@@ -514,8 +549,7 @@ class GroupedQueryAttentionLayer(Layer):
             h_per = self.num_heads // tp  # Heads per chip
             
             # (a) Softmax stats: 2 FP32 scalars per query per head
-            softmax_stat_bytes = 4  # FP32
-            stats_comm = num_queries * h_per * 2 * softmax_stat_bytes
+            stats_comm = num_queries * h_per * 2 * SOFTMAX_STATS_BYTES
             
             # (b) Output vector reduction
             output_width = self.hidden_size // tp if tp > 1 else self.hidden_size
@@ -524,31 +558,6 @@ class GroupedQueryAttentionLayer(Layer):
             cp_comm = stats_comm + output_comm
             total_comm += cp_comm
         
-        return int(total_comm) if total_comm > 0 else None
+        return int(total_comm)
     
-    def compute_metrics(
-        self,
-        batch_size: int,
-        seq_len: int,
-        phase: Phase | str,
-        hardware: Optional[dict] = None
-    ):
-        """Override to use phase-aware KV cache calculation"""
-        # Convert string inputs to enums
-        if isinstance(phase, str):
-            phase = Phase(phase)
-        
-        # Call parent's compute_metrics
-        metrics = super().compute_metrics(batch_size, seq_len, phase, hardware)
-        
-        # Replace KV cache with phase-aware version
-        kv_cache_per_package = self._compute_kv_cache_with_phase(batch_size, seq_len, phase)
-        num_packages = self._get_num_packages()
-        
-        # Create new metrics with updated KV cache
-        from dataclasses import replace
-        return replace(
-            metrics,
-            kv_cache_per_package=kv_cache_per_package,
-            kv_cache_total=kv_cache_per_package * num_packages
-        )
+

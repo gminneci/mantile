@@ -16,9 +16,10 @@ Supported parallelism strategies:
 
 from typing import Optional
 from .base import Layer, Phase, DataType
+from .attention import _AttentionLayerBase, SOFTMAX_STATS_BYTES
 
 
-class SlidingWindowAttentionLayer(Layer):
+class SlidingWindowAttentionLayer(_AttentionLayerBase):
     """
     Grouped Query Attention with Sliding Window and optional features.
     
@@ -42,6 +43,7 @@ class SlidingWindowAttentionLayer(Layer):
     """
     
     SUPPORTED_PARALLELISM = {"tensor_parallel", "context_parallel"}
+    default_kernel_count = 4  # Similar to GQA with windowing logic
     
     def __init__(
         self,
@@ -50,10 +52,10 @@ class SlidingWindowAttentionLayer(Layer):
         num_query_heads: int,
         num_kv_heads: int,
         head_dim: int,
+        dtype: DataType | str,
         sliding_window: Optional[int] = None,
         num_sinks: int = 0,
         has_bias: bool = False,
-        dtype: DataType | str = "bf16",
         parallelism: Optional[dict] = None
     ):
         """
@@ -358,27 +360,33 @@ class SlidingWindowAttentionLayer(Layer):
         return int(elements * self.dtype.bytes_per_element)
     
     def _compute_kv_cache_with_phase(self, batch_size: int, seq_len: int, phase: Phase) -> int:
-        """Phase-aware KV cache calculation."""
+        """
+        Phase-aware KV cache calculation.
+        
+        IMPORTANT: For decode phase, we compute the MEMORY BANDWIDTH required to read KV cache,
+        which scales with the FULL past context length (seq_len), NOT the sliding window size.
+        
+        Even though SWA only attends to (window + sinks) positions for COMPUTE,
+        implementations like vLLM store the full KV cache and read it during decode.
+        The sliding window optimization reduces attention FLOPs but not memory bandwidth.
+        """
         tp = self.parallelism.get("tensor_parallel", 1)
         cp = self.parallelism.get("context_parallel", 1)
         
         kv_heads_local = self.num_kv_heads // tp
         
         if phase == Phase.PREFILL:
-            # Cache for processed sequence
-            cache_len = seq_len
+            # Prefill: Cache limited by window for storage efficiency
+            cache_len = self._kv_cache_positions(seq_len)
         else:  # DECODE
-            # Cache includes past (seq_len already includes past)
-            # For decode, seq_len represents past_seq_len
+            # Decode: Memory bandwidth scales with FULL past context, not window!
+            # vLLM stores full KV cache and reads all of it during decode.
             cache_len = seq_len
-        
-        # Apply window limit
-        cache_positions = self._kv_cache_positions(cache_len)
         
         # Shard by CP
-        cache_positions_local = cache_positions // cp if cp > 1 else cache_positions
+        cache_len_local = cache_len // cp if cp > 1 else cache_len
         
-        elements = 2 * batch_size * kv_heads_local * cache_positions_local * self.head_dim
+        elements = 2 * batch_size * kv_heads_local * cache_len_local * self.head_dim
         return int(elements * self.dtype.bytes_per_element)
     
     def _compute_communication_bytes(
@@ -387,7 +395,7 @@ class SlidingWindowAttentionLayer(Layer):
         seq_len: int,
         phase: Phase,
         hardware: dict
-    ) -> Optional[int]:
+    ) -> int:
         """Communication for TP and CP."""
         tp = self.parallelism.get("tensor_parallel", 1)
         cp = self.parallelism.get("context_parallel", 1)
@@ -413,7 +421,7 @@ class SlidingWindowAttentionLayer(Layer):
             h_q_local = self.num_query_heads // tp
             
             # Softmax stats: 2 FP32 scalars per query per head
-            stats_comm = num_queries * h_q_local * 2 * 4  # FP32
+            stats_comm = num_queries * h_q_local * 2 * SOFTMAX_STATS_BYTES
             
             # Output reduction
             output_width = self.hidden_size // tp if tp > 1 else self.hidden_size
@@ -421,29 +429,6 @@ class SlidingWindowAttentionLayer(Layer):
             
             total_comm += int(stats_comm + output_comm)
         
-        return int(total_comm) if total_comm > 0 else None
+        return int(total_comm)
     
-    def compute_metrics(
-        self,
-        batch_size: int,
-        seq_len: int,
-        phase: Phase | str,
-        hardware: Optional[dict] = None
-    ):
-        """Override to use phase-aware KV cache calculation."""
-        if isinstance(phase, str):
-            phase = Phase(phase)
-        
-        # Call parent's compute_metrics
-        metrics = super().compute_metrics(batch_size, seq_len, phase, hardware)
-        
-        # Replace KV cache with phase-aware version
-        kv_cache_per_package = self._compute_kv_cache_with_phase(batch_size, seq_len, phase)
-        num_packages = self._get_num_packages()
-        
-        from dataclasses import replace
-        return replace(
-            metrics,
-            kv_cache_per_package=kv_cache_per_package,
-            kv_cache_total=kv_cache_per_package * num_packages
-        )
+

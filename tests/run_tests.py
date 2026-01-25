@@ -820,7 +820,7 @@ def test_swa_layers():
             'flops_per_chip': 110_378_624,
             'weight_memory_per_chip': 53_100_160,
             'activation_memory_per_chip': 43_520,
-            'kv_cache_per_chip': 524_288,  # Limited to window
+            'kv_cache_per_chip': 1_048_576,  # Full past context (256 tokens) for bandwidth modeling
         }
         
         print(f"  FLOPs/chip: {metrics.flops_per_package:,} (expected: {expected['flops_per_chip']:,})")
