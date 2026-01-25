@@ -122,6 +122,22 @@ hbm_memory = next(
 
 ## Low Priority
 
+### UI/UX Improvements
+
+#### Implicit Layer/System View Switching
+**Location**: `frontend/src/App.jsx`  
+**Description**: Replace tab-based switching with implicit mode detection based on layer selection  
+**Current State**: Users manually switch between "System" and "Layer" tabs  
+**Proposed Behavior**:
+- Default view: System metrics (no layers selected)
+- Automatic switch: When any layer is selected, automatically show Layer metrics view
+- Automatic return: When all layers are deselected, return to System metrics view
+- Visual clarity: Title changes from "System Metrics" to "Layer Metrics" with appropriate icon (Server vs Layers)
+**Benefits**:
+- More intuitive workflow - mode follows selection state
+- Reduces cognitive load - one less thing to remember to switch
+- Cleaner UI - removes tab navigation element
+
 ### Layer-Level Metrics Dashboard
 **Location**: Roadmap item  
 **Description**: Add detailed per-layer metrics view showing compute, memory, and communication breakdown  
