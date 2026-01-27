@@ -5,7 +5,7 @@ WORKDIR /app
 # Copy backend code and requirements
 COPY backend ./backend
 
-# Install dependencies
+# Install Python dependencies
 RUN pip install --no-cache-dir -r backend/requirements.txt
 
 # Expose port (Railway will set $PORT)
