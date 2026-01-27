@@ -209,7 +209,7 @@ export default function App() {
       
       const layersDict = {};
       
-      layers.forEach(layerMeta => {
+      comparisonLayers.forEach(layerMeta => {
         const layerTypeConfig = comparisonConfig.layerConfigs[layerMeta.name];
         const phaseParallelism = layerTypeConfig[phase];
         
