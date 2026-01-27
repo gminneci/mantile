@@ -1,0 +1,12 @@
+.git
+.gitignore
+.env
+mantile/
+frontend/
+model_builder/
+reconcile/
+tests/
+README.md
+TODO.md
+*.md
+.claude/
