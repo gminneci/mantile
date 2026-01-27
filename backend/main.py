@@ -77,6 +77,12 @@ def _resolve_layer_class(name: str):
     return getattr(layers_pkg, name, None)
 
 
+@app.get("/")
+async def root():
+    """Health check endpoint."""
+    return {"status": "ok", "message": "Mantile API is running"}
+
+
 @app.get("/models")
 def list_models() -> List[Dict[str, Any]]:
     """List all available model configurations."""
