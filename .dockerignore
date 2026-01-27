@@ -1,12 +1,13 @@
 .git
 .gitignore
 .env
+.python-version
 mantile/
 frontend/
 model_builder/
 reconcile/
 tests/
-README.md
-TODO.md
 *.md
 .claude/
+run_backend.sh
+run_frontend.sh
