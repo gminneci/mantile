@@ -413,6 +413,51 @@ export default function App() {
     }
   }, [config.prefill.hardware, config.decode.hardware, comparisonConfig.prefill.hardware, comparisonConfig.decode.hardware]);
 
+  // Load comparison layers (separate from primary)
+  const loadComparisonLayers = async () => {
+    if (!comparisonConfig.model || comparisonConfig.model === '') {
+      return;
+    }
+    
+    try {
+      // Get layer information using stateless endpoint
+      const layersResponse = await axios.get(`${API_URL}/api/layers`, {
+        params: { model_id: comparisonConfig.model }
+      });
+      
+      // Initialize layer configs by TYPE for comparison
+      const defaultLayerConfigs = {};
+      
+      // Get first available dtype from current hardware config, or default to bf16
+      const defaultDtype = availableDtypes.length > 0 ? availableDtypes[0] : 'bf16';
+      
+      layersResponse.data.layers.forEach(layer => {
+        defaultLayerConfigs[layer.name] = {
+          prefill: {
+            tp_degree: 1,
+            cp_degree: 1,
+            sp_degree: 1
+          },
+          decode: {
+            tp_degree: 1,
+            cp_degree: 1,
+            sp_degree: 1
+          },
+          dtype: defaultDtype
+        };
+      });
+      
+      setComparisonConfig(prev => ({
+        ...prev,
+        layerConfigs: defaultLayerConfigs
+      }));
+      
+    } catch (err) {
+      console.error('Failed to load comparison layers:', err);
+      // Don't set global error for comparison side
+    }
+  };
+
   // Load layers when model changes (auto-load)
   useEffect(() => {
     if (config.model && config.model !== '') {
@@ -421,6 +466,15 @@ export default function App() {
       setSelectedLayers([]);
     }
   }, [config.model]);
+
+  // Load comparison layers when comparison model changes
+  useEffect(() => {
+    if (comparisonMode && comparisonConfig.model && comparisonConfig.model !== '') {
+      loadComparisonLayers();
+      // Clear selected layers from comparison side since layer names may have changed
+      setSelectedLayers(prev => prev.filter(l => l.configSide !== 'comparison'));
+    }
+  }, [comparisonConfig.model, comparisonMode]);
 
   // Compute aggregate metrics using new two-phase API
   const computeMetrics = async () => {
