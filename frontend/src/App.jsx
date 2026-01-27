@@ -57,6 +57,7 @@ export default function App() {
   
   // Layer metadata (from backend)
   const [layers, setLayers] = useState([]);
+  const [comparisonLayers, setComparisonLayers] = useState([]);
   
   // Metrics State (response from backend)
   const [metrics, setMetrics] = useState(null);
@@ -245,7 +246,7 @@ export default function App() {
 
   // Helper: Check if comparison config is complete
   const isComparisonConfigComplete = () => {
-    const hasAllLayerConfigs = layers.every(layer => {
+    const hasAllLayerConfigs = comparisonLayers.every(layer => {
       const cfg = comparisonConfig.layerConfigs[layer.name];
       return cfg && cfg.dtype;
     });
@@ -424,6 +425,9 @@ export default function App() {
       const layersResponse = await axios.get(`${API_URL}/api/layers`, {
         params: { model_id: comparisonConfig.model }
       });
+      
+      // Set comparison layers
+      setComparisonLayers(layersResponse.data.layers);
       
       // Initialize layer configs by TYPE for comparison
       const defaultLayerConfigs = {};
@@ -1321,7 +1325,7 @@ export default function App() {
               <div style={{ height: '95px' }} />
 
               {/* Prefill Phase Configuration */}
-              {layers.length > 0 && (
+              {comparisonLayers.length > 0 && (
                 <>
                   <div className="flex flex-col gap-4 mb-6" style={{ marginTop: '1.5rem' }}>
                     <h3 className="text-white font-bold flex items-center gap-2" style={{ color: '#f96c56' }}>
@@ -1492,7 +1496,7 @@ export default function App() {
                 </>
               )}
 
-              {!layers.length && (
+              {!comparisonLayers.length && (
                 <div className="text-dim text-sm italic text-center mt-8">
                   Select a model to begin
                 </div>
@@ -1513,7 +1517,7 @@ export default function App() {
               <div style={{ height: '95px' }} />
               
               {/* Decode Phase Configuration */}
-              {layers.length > 0 && (
+              {comparisonLayers.length > 0 && (
                 <>
                   <div className="flex flex-col gap-4 mb-6" style={{ marginTop: '1.5rem' }}>
                     <div className="flex items-center justify-between">
@@ -1681,7 +1685,7 @@ export default function App() {
                     <h3 className="font-semibold flex items-center gap-2" style={{ color: '#f96c56' }}>
                       <Layers size={18} /> Layer Configuration
                     </h3>
-                    {layers.map(layer => (
+                    {comparisonLayers.map(layer => (
                       <LayerConfigCard
                         key={layer.name}
                         layer={layer}
@@ -1720,7 +1724,7 @@ export default function App() {
                 </>
               )}
 
-              {!layers.length && (
+              {!comparisonLayers.length && (
                 <div className="text-dim text-sm italic text-center mt-8">
                   Select a model to begin
                 </div>
