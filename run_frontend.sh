@@ -26,4 +26,4 @@ echo "Starting Vite dev server on http://localhost:5173"
 if [ -n "$VITE_BASE_PATH" ] && [ "$VITE_BASE_PATH" != "/" ]; then
     echo "  Frontend base path: $VITE_BASE_PATH"
 fi
-npm run dev
+npm run dev -- --host
