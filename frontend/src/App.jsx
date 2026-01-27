@@ -1457,7 +1457,7 @@ export default function App() {
                     <h3 className="font-semibold flex items-center gap-2" style={{ color: '#f96c56' }}>
                       <Layers size={18} /> Layer Configuration
                     </h3>
-                    {layers.map(layer => (
+                    {comparisonLayers.map(layer => (
                       <LayerConfigCard
                         key={layer.name}
                         layer={layer}
