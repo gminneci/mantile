@@ -477,6 +477,8 @@ export default function App() {
       loadComparisonLayers();
       // Clear selected layers from comparison side since layer names may have changed
       setSelectedLayers(prev => prev.filter(l => l.configSide !== 'comparison'));
+      // Clear comparison metrics while loading new model
+      setComparisonMetrics(null);
     }
   }, [comparisonConfig.model, comparisonMode]);
 
@@ -535,20 +537,22 @@ export default function App() {
   ]);
 
   // Auto-compute comparison metrics when comparison config changes
+  // Don't include comparisonConfig.model here - that triggers layer loading first
   useEffect(() => {
-    if (comparisonMode && isComparisonConfigComplete()) {
+    if (comparisonMode && isComparisonConfigComplete() && comparisonLayers.length > 0) {
       computeComparisonMetrics();
     }
   }, [
     comparisonMode,
-    comparisonConfig.model,
+    // comparisonConfig.model deliberately excluded - handled by loadComparisonLayers useEffect
     comparisonConfig.prefill.hardware,
     comparisonConfig.prefill.batchSize,
     comparisonConfig.prefill.seqLen,
     comparisonConfig.decode.hardware,
     comparisonConfig.decode.batchSize,
     comparisonConfig.decode.seqLen,
-    JSON.stringify(comparisonConfig.layerConfigs)
+    JSON.stringify(comparisonConfig.layerConfigs),
+    JSON.stringify(comparisonLayers.map(l => l.name))  // This will trigger after layers load
   ]);
 
   // Auto-refresh selected layer metrics when config changes
