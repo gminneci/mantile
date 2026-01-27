@@ -502,6 +502,7 @@ class Layer(ABC):
                     "dtype": self.dtype.value,
                     "dtype_bytes": self.dtype.bytes_per_element,
                     "layer_type": self.__class__.__name__,
+                    "parallelism": self.parallelism,
                     "num_packages": num_packages,
                     "default_kernel_count": self.default_kernel_count,
                 },

@@ -124,6 +124,29 @@ hbm_memory = next(
 
 ### UI/UX Improvements
 
+#### Validate Parallelism Slider Values Against Backend Constraints
+**Location**: `frontend/src/App.jsx`, `frontend/src/components/LayerConfigCard.jsx`  
+**Description**: Ensure frontend sliders only allow "legal" parallelism values that satisfy backend validation rules  
+**Current State**: Sliders allow any integer value, leading to validation errors like "num_heads (64) must be divisible by TP degree (3)"  
+**Backend Constraints**:
+- TP must divide num_heads for attention layers
+- TP must divide intermediate_size for MLP layers
+- EP must divide num_experts for MoE layers
+- Total packages (TP × EP) must not exceed available hardware
+**Implementation Options**:
+1. **Client-side validation**: Query layer specs and compute valid values on frontend
+2. **Backend validation endpoint**: Add `/config/validate-parallelism` endpoint that returns allowed values
+3. **Discrete slider steps**: Configure sliders to only stop at valid divisors
+**Proposed Approach**:
+- Add validation logic to frontend that checks divisibility before allowing value changes
+- Display helper text showing valid values (e.g., "Must divide 64: 1, 2, 4, 8, 16, 32, 64")
+- Disable slider increments that would result in invalid configurations
+- Show validation error messages inline with helpful guidance
+**Benefits**:
+- Prevents backend validation errors before they occur
+- Better UX - users understand constraints immediately
+- Reduces trial-and-error configuration attempts
+
 #### Implicit Layer/System View Switching
 **Location**: `frontend/src/App.jsx`  
 **Description**: Replace tab-based switching with implicit mode detection based on layer selection  
