@@ -169,6 +169,18 @@ hbm_memory = next(
 - Support layer-by-layer profiling to identify optimization opportunities
 - Interactive layer comparison across configurations
 
+#### Differentiate Weight Load vs KV Cache Load in Timings Breakdown
+**Location**: Frontend layer metrics tab  
+**Description**: The timings breakdown should distinguish between weight load time and KV cache load time  
+**Current State**: Memory load timings are currently aggregated  
+**Improvement Needed**: Show separate timing components for weight loading and KV cache loading to better identify memory bottlenecks
+
+#### Add Total GFlops Per Layer Per Batch
+**Location**: Frontend layer metrics tab  
+**Description**: Display the total GFlops for each layer per batch in the layer metrics view  
+**Current State**: Missing comprehensive GFlops metrics at layer level  
+**Benefit**: Helps users understand computational intensity and compare across layers
+
 ### Agentic IR Builder
 **Location**: Roadmap item  
 **Description**: Make IR builder autonomous to automatically infer model architectures  
