@@ -172,6 +172,8 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000 --workers 4
 
 ### Frontend
 
+#### Option 1: Static Build (nginx, Apache, Caddy)
+
 ```bash
 # Install dependencies
 cd frontend
@@ -183,6 +185,35 @@ VITE_BASE_PATH=/estimator/ VITE_API_URL=https://your-domain.com/estimator-api np
 # Output will be in frontend/dist/
 # Serve with your web server (nginx, Apache, etc.)
 ```
+
+#### Option 2: Vite Preview Server (Development/Testing on Remote Servers)
+
+For development or testing on remote servers (e.g., GCloud, AWS):
+
+```bash
+# Install dependencies
+cd frontend
+npm install
+
+# Create .env.local for configuration
+cat > .env.local << 'EOF'
+VITE_BASE_PATH=/estimator/
+VITE_API_URL=/estimator-api
+VITE_HMR=false
+EOF
+
+# Build the app
+npm run build
+
+# Run preview server (serves production build)
+npx vite preview --host --port 5173
+```
+
+**Notes:**
+- `--host` makes the server accessible from external IPs (equivalent to `0.0.0.0`)
+- `VITE_HMR=false` disables Hot Module Replacement (not needed for production builds)
+- Use `screen` or `tmux` to run in background: `screen -S mantile-frontend`
+- Preview server is suitable for development/testing but use nginx/Apache for production
 
 ## Troubleshooting
 
