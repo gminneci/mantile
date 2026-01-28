@@ -770,7 +770,7 @@ export default function App() {
         gap: '1rem'
       }}>
         <div className="flex items-center gap-2">
-          <img src="/mantile-logo.png" alt="Mantile" style={{ height: '38px' }} />
+          <img src={`${import.meta.env.BASE_URL}mantile-logo.png`} alt="Mantile" style={{ height: '38px' }} />
         </div>
         
         <button
