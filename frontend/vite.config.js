@@ -10,7 +10,7 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     allowedHosts: true,
-    hmr: {
+    hmr: process.env.VITE_HMR === 'false' ? false : {
       // Use the external host for HMR WebSocket connections
       clientPort: process.env.VITE_HMR_PORT ? parseInt(process.env.VITE_HMR_PORT) : undefined,
       host: process.env.VITE_HMR_HOST || 'localhost',
